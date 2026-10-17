@@ -23,9 +23,12 @@ jobs:
             echo "Casks/devtidy.rb yok: denetim atlandı."
           fi
 
-      - name: Tap'i checkout'tan ekle
+      - name: Tap'i checkout'tan ekle ve güven
         if: steps.cask.outputs.present == 'true'
-        run: brew tap suleymanozcan/tap "$GITHUB_WORKSPACE"
+        run: |
+          brew tap suleymanozcan/tap "$GITHUB_WORKSPACE"
+          # Homebrew loads casks from third-party taps only once the tap is trusted.
+          brew trust suleymanozcan/tap
 
       - name: brew style
         if: steps.cask.outputs.present == 'true'
@@ -33,11 +36,11 @@ jobs:
 
       - name: brew audit
         if: steps.cask.outputs.present == 'true'
-        run: brew audit --cask --strict --online devtidy
+        run: brew audit --cask --strict --online suleymanozcan/tap/devtidy
 
       - name: brew install
         if: steps.cask.outputs.present == 'true'
-        run: brew install --cask devtidy
+        run: brew install --cask suleymanozcan/tap/devtidy
 
       - name: Kurulumu doğrula
         if: steps.cask.outputs.present == 'true'
