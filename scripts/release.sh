@@ -214,7 +214,9 @@ swift test
 
 echo "==> [2/8] evrensel imzalı $APP"
 SIGN="$SIGN_IDENTITY" VERSION="$VERSION" scripts/bundle.sh
-if ! codesign -dv --verbose=4 "$APP" 2>&1 | grep -qF "Authority=Developer ID Application: $SIGN_TEAM ("; then
+# Captured first: `grep -q` exits at the first match, codesign then dies of SIGPIPE and `pipefail` would fail the check.
+SIGNATURE="$(codesign -dv --verbose=4 "$APP" 2>&1)"
+if ! grep -qF "Authority=Developer ID Application: $SIGN_TEAM (" <<<"$SIGNATURE"; then
     echo "release.sh: HATA: $APP '$SIGN_TEAM' Developer ID ile imzalanmamış; yayın durduruldu (dışarıda hiçbir şey oluşturulmadı)." >&2
     exit 1
 fi
