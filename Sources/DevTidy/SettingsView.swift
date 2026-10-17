@@ -100,7 +100,7 @@ private struct ScanSettings: View {
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
         panel.prompt = "Ekle"
         guard panel.runModal() == .OK else { return }
-        // The first custom root keeps the default one visible, so adding never silently drops ~/developer.
+        // The first custom root keeps the default ones visible, so adding never silently drops a probed default folder.
         var roots = store.settings.scanRoots.isEmpty ? store.effectiveScanRoots : store.settings.scanRoots
         for url in panel.urls where !roots.contains(url.path) { roots.append(url.path) }
         store.settings.scanRoots = roots

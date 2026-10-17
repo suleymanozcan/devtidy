@@ -31,8 +31,12 @@ public struct UserDefaultsSettingsStorage: SettingsStorage, @unchecked Sendable 
 /// `DevTidySettings` persistence plus the derived values the store needs (effective scan roots, socket override reader).
 @MainActor
 public final class SettingsStore {
-    /// Scan root used when the user has not chosen any (relative to the home directory).
-    public static let defaultRootName = "developer"
+    /// Common development folders probed under the home directory when the user has not chosen any roots. Only the
+    /// ones that exist are scanned. Desktop, Documents and Downloads are deliberately absent: walking them triggers
+    /// macOS privacy prompts.
+    public static let defaultRootNames = [
+        "developer", "Developer", "Projects", "projects", "code", "Code", "dev", "src", "repos", "workspace", "GitHub", "Sites",
+    ]
 
     private let storage: any SettingsStorage
     private let homeDirectory: String
@@ -63,12 +67,32 @@ public final class SettingsStore {
         }
     }
 
-    /// Roots handed to the builds scan: the user's list with `~` expanded, or `["<home>/developer"]` when empty.
+    /// Roots handed to the builds scan: the user's list with `~` expanded, or, when it is empty, every
+    /// `defaultRootNames` folder that exists as a real directory (not a symlink) under the home directory, once per
+    /// physical directory. With none present it falls back to `<home>/developer`.
     public func effectiveScanRoots(for settings: DevTidySettings) -> [String] {
         let chosen = settings.scanRoots.map(expandTilde).filter { !$0.isEmpty }
-        if chosen.isEmpty { return [homeDirectory + "/" + Self.defaultRootName] }
+        if chosen.isEmpty {
+            let found = existingDefaultRoots()
+            return found.isEmpty ? [homeDirectory + "/" + Self.defaultRootNames[0]] : found
+        }
         var seen = Set<String>()
         return chosen.filter { seen.insert($0).inserted }
+    }
+
+    /// `lstat`, so a symlinked folder is never followed; identity by device + inode, so `developer` and `Developer`
+    /// on a case-insensitive volume are scanned once.
+    private func existingDefaultRoots() -> [String] {
+        var seen = Set<String>()
+        var roots: [String] = []
+        for name in Self.defaultRootNames {
+            let path = homeDirectory + "/" + name
+            var info = stat()
+            guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { continue }
+            guard seen.insert("\(info.st_dev):\(info.st_ino)").inserted else { continue }
+            roots.append(path)
+        }
+        return roots
     }
 
     /// Thread-safe reader for `DevTidyServices.live(socketOverride:)`; reflects the last `load()` / `save(_:)`.

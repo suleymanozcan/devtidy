@@ -46,9 +46,47 @@ struct SettingsStoreTests {
         #expect(wrongShape.load() == DevTidySettings())
     }
 
-    @Test func emptyScanRootsExpandToDeveloperUnderTheInjectedHome() {
-        let (store, _) = makeStore()
-        #expect(store.effectiveScanRoots(for: DevTidySettings()) == ["/tmp/s4home/developer"])
+    @Test func emptyScanRootsFallBackToDeveloperWhenNoCommonFolderExists() throws {
+        let home = try Self.makeHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let store = SettingsStore(storage: S4MemoryStorage(initial: nil), homeDirectory: home)
+        #expect(store.effectiveScanRoots(for: DevTidySettings()) == [home + "/developer"])
+    }
+
+    @Test func emptyScanRootsUseEveryExistingCommonFolderOncePerDirectoryAndNeverASymlink() throws {
+        let home = try Self.makeHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: home + "/Projects", withIntermediateDirectories: false)
+        try fm.createDirectory(atPath: home + "/code", withIntermediateDirectories: false)
+        let outside = home + "/elsewhere"
+        try fm.createDirectory(atPath: outside, withIntermediateDirectories: false)
+        try fm.createSymbolicLink(atPath: home + "/dev", withDestinationPath: outside)
+        try Data().write(to: URL(fileURLWithPath: home + "/src"))
+        let store = SettingsStore(storage: S4MemoryStorage(initial: nil), homeDirectory: home)
+        let roots = store.effectiveScanRoots(for: DevTidySettings())
+        // "Projects"/"projects" and "code"/"Code" are one directory each on a case-insensitive volume and two on a
+        // case-sensitive one where only one spelling exists: either way each physical folder appears exactly once.
+        #expect(roots == [home + "/Projects", home + "/code"])
+        #expect(!roots.contains(home + "/dev"))
+        #expect(!roots.contains(home + "/src"))
+    }
+
+    @Test func chosenRootsReplaceTheDefaults() throws {
+        let home = try Self.makeHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try FileManager.default.createDirectory(atPath: home + "/Projects", withIntermediateDirectories: false)
+        let store = SettingsStore(storage: S4MemoryStorage(initial: nil), homeDirectory: home)
+        var settings = DevTidySettings()
+        settings.scanRoots = ["~/work"]
+        #expect(store.effectiveScanRoots(for: settings) == [home + "/work"])
+    }
+
+    private static func makeHome() throws -> String {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+        let home = base.appendingPathComponent("devtidy-s4home-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: false)
+        return home
     }
 
     @Test func tildeRootsAreExpandedAndDeduplicated() {

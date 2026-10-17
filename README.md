@@ -186,7 +186,7 @@ Açılır pencerede `Ayarlar…` (⌘,). Değerler `UserDefaults` içinde `devti
 | Genel | Menü çubuğunda bellek kullanımını göster | açık | |
 | Genel | Diğer dinleyicileri göster | kapalı | |
 | Genel | Sayfa başlığını oku (localhost'a tek GET isteği) | açık | |
-| Tarama | Taranan klasörler | boşsa `~/developer` | `+`/`−` ile eklenir/çıkarılır; ev dizininin altında olmalı |
+| Tarama | Taranan klasörler | boşsa ev dizinindeki `developer`, `Developer`, `Projects`, `projects`, `code`, `Code`, `dev`, `src`, `repos`, `workspace`, `GitHub`, `Sites` klasörlerinden var olanlar (sembolik bağlantılar hariç); hiçbiri yoksa `~/developer` | `+`/`−` ile eklenir/çıkarılır; ev dizininin altında olmalı. Masaüstü, Belgeler ve İndirilenler varsayılan olarak taranmaz (macOS izin penceresi açtırır) |
 | Tarama | Tarama derinliği | 4 | 2–6 |
 | Tarama | node_modules ve diğer bağımlılıkları listele | kapalı | |
 | Boşta | Sunucu: sessiz kalma süresi | 30 dk | 5–480 dk |
