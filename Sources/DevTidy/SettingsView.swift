@@ -4,6 +4,7 @@ import DevTidyCore
 
 struct SettingsView: View {
     @Bindable var store: DevTidyStore
+    let updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +17,8 @@ struct SettingsView: View {
                     .tabItem { Label("Boşta", systemImage: "moon.zzz") }
                 DockerSettings(store: store)
                     .tabItem { Label("Docker", systemImage: "shippingbox") }
+                UpdateSettings(updater: updater)
+                    .tabItem { Label("Güncelleme", systemImage: "arrow.triangle.2.circlepath") }
             }
             Divider()
             HStack {
@@ -54,6 +57,44 @@ private struct GeneralSettings: View {
             Text("İstek sunucunun kendi günlüğünde görünür; Next.js gibi çalışırken derleyen sunucularda ilk istek sayfa derlemesini başlatabilir. Bu yüzden boştaki sunuculara istek gönderilmez (etkinleşince okunur) ve okuma sırasındaki CPU ile bağlantı, sunucuyu “boşta” saymayı sıfırlamaz.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct UpdateSettings: View {
+    let updater: Updater
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "DevTidy \(short) (\(build))"
+    }
+
+    var body: some View {
+        Form {
+            Toggle("Güncellemeleri otomatik denetle", isOn: Binding(
+                get: { updater.automaticallyChecksForUpdates },
+                set: { updater.setAutomaticallyChecksForUpdates($0) }
+            ))
+            Toggle("Güncellemeleri otomatik indir ve kur", isOn: Binding(
+                get: { updater.automaticallyDownloadsUpdates },
+                set: { updater.setAutomaticallyDownloadsUpdates($0) }
+            ))
+            .disabled(!updater.automaticallyChecksForUpdates)
+            Text("Açıkken DevTidy günde bir kez GitHub'daki sürüm bilgisine (appcast.xml) bakar; yeni sürüm varsa Sparkle'ın standart penceresi çıkar. Güncelleme indirilmeden önce EdDSA imzası doğrulanır. Bu istek dışında DevTidy yalnızca kendi makinenize (loopback) bağlanır.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Güncellemeleri Denetle…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+                Spacer()
+                Text(version)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
         .formStyle(.grouped)
     }

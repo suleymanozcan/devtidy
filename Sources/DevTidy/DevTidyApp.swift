@@ -5,6 +5,7 @@ import DevTidyCore
 @MainActor
 struct DevTidyApp: App {
     @State private var store: DevTidyStore
+    @State private var updater: Updater
 
     init() {
         let settingsStore = SettingsStore()
@@ -13,6 +14,8 @@ struct DevTidyApp: App {
         // `MenuBarExtra` content is lazy: polling must start here, not when the popover is first opened.
         store.start()
         _store = State(initialValue: store)
+        // One updater for the whole process, started now so that Sparkle's scheduled background checks run from launch.
+        _updater = State(initialValue: Updater())
     }
 
     var body: some Scene {
@@ -24,7 +27,7 @@ struct DevTidyApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(store: store)
+            SettingsView(store: store, updater: updater)
         }
     }
 }

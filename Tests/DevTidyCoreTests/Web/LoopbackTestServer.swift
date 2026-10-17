@@ -32,8 +32,8 @@ final class LoopbackTestServer: @unchecked Sendable {
     private let handler: @Sendable (Request, Int) -> Reply
     let port: UInt16
 
-    /// `handler(request, index)`: `index` is the 0-based number of the request.
-    init(ipv6: Bool = false, handler: @escaping @Sendable (Request, Int) -> Reply) throws {
+    /// `handler(request, index)`: `index` is the 0-based number of the request. `port` 0 = a kernel-chosen port.
+    init(ipv6: Bool = false, port requestedPort: UInt16 = 0, handler: @escaping @Sendable (Request, Int) -> Reply) throws {
         self.handler = handler
         let fd = Darwin.socket(ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw StartError.socket(errno) }
@@ -44,6 +44,7 @@ final class LoopbackTestServer: @unchecked Sendable {
             var address = sockaddr_in6()
             address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
             address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = requestedPort.bigEndian
             withUnsafeMutableBytes(of: &address.sin6_addr) { $0[15] = 1 }
             let result = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) }
@@ -58,6 +59,7 @@ final class LoopbackTestServer: @unchecked Sendable {
             var address = sockaddr_in()
             address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
             address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = requestedPort.bigEndian
             address.sin_addr.s_addr = UInt32(0x7F00_0001).bigEndian
             let result = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
@@ -73,6 +75,24 @@ final class LoopbackTestServer: @unchecked Sendable {
         listenFD = fd
         port = boundPort
         Thread.detachNewThread { [self] in acceptLoop(fd) }
+    }
+
+    /// Two servers on the SAME port, one on 127.0.0.1 and one on ::1: two different sockets that a connection reaches by address
+    /// family alone. The kernel picks the IPv4 port; the IPv6 socket takes the same number (another pair is tried when that
+    /// number happens to be taken on ::1).
+    static func sharedPortPair(v4: @escaping @Sendable (Request, Int) -> Reply,
+                               v6: @escaping @Sendable (Request, Int) -> Reply) throws -> (v4: LoopbackTestServer, v6: LoopbackTestServer) {
+        var failure: Error = StartError.bind(EADDRINUSE)
+        for _ in 0..<20 {
+            let first = try LoopbackTestServer(handler: v4)
+            do {
+                return (first, try LoopbackTestServer(ipv6: true, port: first.port, handler: v6))
+            } catch {
+                first.stop()
+                failure = error
+            }
+        }
+        throw failure
     }
 
     deinit { stop() }

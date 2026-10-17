@@ -167,7 +167,8 @@ public actor LiveProcessScanner: ProcessScanning {
 
     // MARK: Listener merge
 
-    /// Dedupe by port (dup'd fds, v4 + v6 twins — ENV §1.3); the widest scope wins; ascending port order.
+    /// Dedupe by port (dup'd fds, v4 + v6 twins — ENV §1.3); the widest scope wins and every socket's bind address is kept;
+    /// ascending port order.
     private static func mergedListeners(pid: Int32, sockets: Libproc.SocketScan) -> [ListeningPort] {
         func rank(_ scope: BindScope) -> Int {
             switch scope {
@@ -177,12 +178,14 @@ public actor LiveProcessScanner: ProcessScanning {
             }
         }
         var scopeByPort: [UInt16: BindScope] = [:]
+        var bindsByPort: [UInt16: Set<BindAddress>] = [:]
         for socket in sockets.listening {
+            if let address = socket.address { bindsByPort[socket.port, default: []].insert(address) }
             if let existing = scopeByPort[socket.port], rank(existing) >= rank(socket.scope) { continue }
             scopeByPort[socket.port] = socket.scope
         }
         return scopeByPort.sorted { $0.key < $1.key }.map { entry in
-            ListeningPort(port: entry.key, ownerPID: pid, scope: entry.value,
+            ListeningPort(port: entry.key, ownerPID: pid, scope: entry.value, binds: bindsByPort[entry.key] ?? [],
                           establishedConnections: sockets.established[entry.key] ?? 0)
         }
     }

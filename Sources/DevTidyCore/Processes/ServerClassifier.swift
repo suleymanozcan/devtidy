@@ -133,7 +133,7 @@ public struct ServerClassifier: ServerClassifying {
         // 11. Deterministic output order.
         servers.sort { Self.sortKey($0) < Self.sortKey($1) }
         others.sort { ($0.node.name, $0.node.pid) < ($1.node.name, $1.node.pid) }
-        return ServerScan(takenAt: snapshot.takenAt, servers: servers, others: others)
+        return ServerScan(takenAt: snapshot.takenAt, servers: servers, others: others, listeners: snapshot.listeners)
     }
 
     // MARK: Exclusion & project association

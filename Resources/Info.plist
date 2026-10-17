@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleIdentifier</key><string>__BUNDLE_ID__</string>
+  <!-- The whole UI is Turkish: declaring tr makes Sparkle's framework strings (Sparkle.framework ships tr.lproj) resolve to Turkish
+       whatever the system language is, because frameworks only see the main bundle's localizations. -->
+  <key>CFBundleDevelopmentRegion</key><string>tr</string>
+  <key>CFBundleLocalizations</key><array><string>tr</string></array>
   <key>CFBundleName</key><string>DevTidy</string>
   <key>CFBundleDisplayName</key><string>DevTidy</string>
   <key>CFBundleExecutable</key><string>DevTidy</string>
@@ -13,4 +17,9 @@
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHumanReadableCopyright</key><string>© Süleyman Özcan</string>
+  <!-- Sparkle 2 (see README, "Güncellemeler"). SUPublicEDKey is the public half of the EdDSA key kept in the maintainer's login keychain. -->
+  <key>SUFeedURL</key><string>https://github.com/suleymanozcan/devtidy/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>sqZhxlxHLTvU7ax/PPlGHxKndreNIjlUEv+72GFOm2Y=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
 </dict></plist>

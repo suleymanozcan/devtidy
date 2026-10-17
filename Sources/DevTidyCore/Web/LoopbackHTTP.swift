@@ -6,10 +6,11 @@ import Darwin
 // properties of the code rather than of a URLSession configuration. It also needs no App Transport Security exception: ATS
 // governs URLSession/CFNetwork loads, not BSD sockets.
 //
-// Only `127.0.0.0/8` literals, `localhost` and `::1` are ever connected to; names are never resolved.
+// Only the loopback addresses the caller names (`127.0.0.0/8` literals and `::1`, the server's own sockets) are ever connected
+// to. A `localhost` in a redirect is read as the address already in use; names are never resolved.
 
 struct LoopbackLimits: Sendable, Equatable {
-    /// Per connection attempt (`127.0.0.1`, then `::1`).
+    /// Per connection attempt (each candidate address in turn).
     var connectTimeout: TimeInterval = 1.5
     /// Connect + send + receive, redirects included.
     var totalTimeout: TimeInterval = 3
@@ -31,48 +32,67 @@ enum LoopbackOutcome: Sendable, Equatable {
 
 // MARK: - Hosts ----------------------------------------------------------------------------------------
 
-enum LoopbackAddress: Sendable, Equatable {
+/// A loopback address a request can be sent to: an IPv4 `127.x.y.z`, or `::1`.
+enum LoopbackAddress: Sendable, Hashable {
     case ipv4(UInt8, UInt8, UInt8, UInt8)
     case ipv6
+
+    /// IPv4 before IPv6, numerically: the order candidates are tried in.
+    var order: UInt64 {
+        switch self {
+        case .ipv4(let a, let b, let c, let d): UInt64(a) << 24 | UInt64(b) << 16 | UInt64(c) << 8 | UInt64(d)
+        case .ipv6: 1 << 32
+        }
+    }
 }
 
-/// Where a request goes. `.any` is the server's own listener: `127.0.0.1` first, then `::1` (the scanner merges the IPv4 and
-/// IPv6 sockets of one port, so the bind family is not known up front; a refused connection costs microseconds).
+/// The host a request names (`Host:` header, redirect `Location`). The connection itself always goes to a `LoopbackAddress` the
+/// caller chose; the host never decides where to connect.
 enum LoopbackHost: Sendable, Equatable {
-    case any
     case localhost
     case ipv4(UInt8, UInt8, UInt8, UInt8)
     case ipv6
 
-    var addresses: [LoopbackAddress] {
-        switch self {
-        case .any, .localhost: [.ipv4(127, 0, 0, 1), .ipv6]
-        case .ipv4(let a, let b, let c, let d): [.ipv4(a, b, c, d)]
-        case .ipv6: [.ipv6]
+    /// The host of a request sent straight to `address`.
+    init(_ address: LoopbackAddress) {
+        switch address {
+        case .ipv4(let a, let b, let c, let d): self = .ipv4(a, b, c, d)
+        case .ipv6: self = .ipv6
         }
     }
 
-    /// The `Host:` header for a request sent to `address`.
-    func hostHeader(for address: LoopbackAddress, port: UInt16) -> String {
-        switch (self, address) {
-        case (.localhost, _): "localhost:\(port)"
-        case (_, .ipv4(let a, let b, let c, let d)): "\(a).\(b).\(c).\(d):\(port)"
-        case (_, .ipv6): "[::1]:\(port)"
+    /// Whether a request for this host is the one the connection to `address` already serves: `localhost` names whatever address
+    /// is in use, an explicit address only itself (another one is another socket, maybe another process's).
+    func isServed(by address: LoopbackAddress) -> Bool {
+        switch self {
+        case .localhost: true
+        case .ipv4(let a, let b, let c, let d): address == .ipv4(a, b, c, d)
+        case .ipv6: address == .ipv6
+        }
+    }
+
+    func hostHeader(port: UInt16) -> String {
+        switch self {
+        case .localhost: "localhost:\(port)"
+        case .ipv4(let a, let b, let c, let d): "\(a).\(b).\(c).\(d):\(port)"
+        case .ipv6: "[::1]:\(port)"
         }
     }
 }
 
 // MARK: - Redirect policy ------------------------------------------------------------------------------
 
-/// A redirect is followed only to `http://` + loopback + the SAME port. Everything else (another host, another port, https,
-/// userinfo, other schemes, control characters) is refused before any connection is made.
+/// A redirect is followed only to `http://` + loopback + the SAME port + the address that answered. Everything else (another
+/// host, another port, https, userinfo, other schemes, control characters, another loopback address: that is another socket,
+/// maybe another process's) is refused before any connection is made. `localhost` keeps the address in use.
 enum LoopbackRedirect {
     struct Target: Equatable {
         let host: LoopbackHost
         let path: String
     }
 
-    static func resolve(location raw: String, currentHost: LoopbackHost, currentPath: String, port: UInt16) -> Target? {
+    static func resolve(location raw: String, currentHost: LoopbackHost, currentPath: String, port: UInt16,
+                        answeredBy address: LoopbackAddress) -> Target? {
         let location = raw.trimmingCharacters(in: .whitespaces)
         guard !location.isEmpty, location.utf8.count <= 2048 else { return nil }
         let lower = location.lowercased()
@@ -112,7 +132,7 @@ enum LoopbackRedirect {
             pathAndQuery = directory + String(rest)
         }
         if let fragment = pathAndQuery.firstIndex(of: "#") { pathAndQuery = String(pathAndQuery[..<fragment]) }
-        guard let target = requestTarget(pathAndQuery) else { return nil }
+        guard host.isServed(by: address), let target = requestTarget(pathAndQuery) else { return nil }
         return Target(host: host, path: target)
     }
 
@@ -401,30 +421,38 @@ struct LoopbackChunkDecoder {
 enum LoopbackHTTP {
     private static let queue = DispatchQueue(label: "dev.minata.devtidy.loopback-http", qos: .utility, attributes: .concurrent)
 
-    /// `GET /` on `127.0.0.1:port` (then `[::1]:port`), redirects followed under `LoopbackRedirect`'s rules. Runs the blocking
-    /// socket work on a private queue.
-    static func fetchHTML(port: UInt16, limits: LoopbackLimits = .standard) async -> LoopbackOutcome {
+    /// `GET /` on `port` of the first of `addresses` (loopback, in the order given) that accepts a connection, redirects followed
+    /// under `LoopbackRedirect`'s rules and only on the address that answered. Runs the blocking socket work on a private queue.
+    static func fetchHTML(addresses: [LoopbackAddress], port: UInt16, limits: LoopbackLimits = .standard) async -> LoopbackOutcome {
         await withCheckedContinuation { (continuation: CheckedContinuation<LoopbackOutcome, Never>) in
-            queue.async { continuation.resume(returning: fetchHTMLBlocking(port: port, limits: limits)) }
+            queue.async {
+                continuation.resume(returning: fetchHTMLBlocking(addresses: addresses, port: port, limits: limits))
+            }
         }
     }
 
-    static func fetchHTMLBlocking(port: UInt16, limits: LoopbackLimits) -> LoopbackOutcome {
+    static func fetchHTMLBlocking(addresses: [LoopbackAddress], port: UInt16, limits: LoopbackLimits) -> LoopbackOutcome {
         let deadline = Deadline(seconds: limits.totalTimeout)
-        var host = LoopbackHost.any
+        guard var connection = connect(to: addresses, port: port, limits: limits, deadline: deadline) else { return .unreachable }
+        // The first address that answers is the one socket asked; a redirect never moves to another.
+        let address = connection.address
+        var host = LoopbackHost(address)
         var path = "/"
         var redirects = 0
         while true {
-            switch exchange(host: host, port: port, path: path, limits: limits, deadline: deadline) {
+            switch exchange(connection.fd, host: host, port: port, path: path, limits: limits, deadline: deadline) {
             case .final(let outcome):
                 return outcome
             case .redirect(let location):
                 guard redirects < limits.maxRedirects,
-                      let next = LoopbackRedirect.resolve(location: location, currentHost: host, currentPath: path, port: port)
+                      let next = LoopbackRedirect.resolve(location: location, currentHost: host, currentPath: path, port: port,
+                                                          answeredBy: address)
                 else { return .nothingToRead }
+                guard let again = connect(to: [address], port: port, limits: limits, deadline: deadline) else { return .unreachable }
                 redirects += 1
                 host = next.host
                 path = next.path
+                connection = again
             }
         }
     }
@@ -445,14 +473,12 @@ enum LoopbackHTTP {
         }
     }
 
-    private static func exchange(host: LoopbackHost, port: UInt16, path: String, limits: LoopbackLimits,
+    /// Sends one request on the connected `fd` and reads the answer; closes `fd`.
+    private static func exchange(_ fd: Int32, host: LoopbackHost, port: UInt16, path: String, limits: LoopbackLimits,
                                  deadline: Deadline) -> Exchange {
-        guard let (fd, address) = connect(host: host, port: port, limits: limits, deadline: deadline) else {
-            return .final(.unreachable)
-        }
         defer { Darwin.close(fd) }
 
-        let request = "GET \(path) HTTP/1.1\r\nHost: \(host.hostHeader(for: address, port: port))\r\nUser-Agent: DevTidy\r\n"
+        let request = "GET \(path) HTTP/1.1\r\nHost: \(host.hostHeader(port: port))\r\nUser-Agent: DevTidy\r\n"
             + "Accept: text/html\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
         guard sendAll(fd, Array(request.utf8), deadline: deadline) else { return .final(.unreachable) }
 
@@ -518,9 +544,10 @@ enum LoopbackHTTP {
 
     // MARK: Sockets
 
-    private static func connect(host: LoopbackHost, port: UInt16, limits: LoopbackLimits,
-                                deadline: Deadline) -> (Int32, LoopbackAddress)? {
-        for address in host.addresses {
+    /// The first of `addresses`, in order, that accepts a connection within the budget.
+    private static func connect(to addresses: [LoopbackAddress], port: UInt16, limits: LoopbackLimits,
+                                deadline: Deadline) -> (fd: Int32, address: LoopbackAddress)? {
+        for address in addresses {
             let budget = min(Int(limits.connectTimeout * 1000), deadline.remainingMilliseconds)
             guard budget > 0 else { return nil }
             if let fd = connectOnce(address, port: port, milliseconds: budget) { return (fd, address) }

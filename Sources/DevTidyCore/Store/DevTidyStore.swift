@@ -127,7 +127,7 @@ public final class DevTidyStore {
 
     /// The page title to show: nil while the setting is off, before the fetch ended, and when the page has none.
     public func pageTitle(for server: DevServer) -> String? {
-        guard settings.fetchPageTitles, let target = PageTitleTarget.make(for: server),
+        guard settings.fetchPageTitles, let target = PageTitleTarget.make(for: server, in: serverScan),
               case .title(let title)? = pageTitles[target] else { return nil }
         return title
     }
@@ -151,7 +151,12 @@ public final class DevTidyStore {
     /// What the details can say about the page title of `server`.
     public func pageTitleStatus(for server: DevServer) -> PageTitleStatus {
         guard settings.fetchPageTitles else { return .disabled }
-        guard let target = PageTitleTarget.make(for: server) else { return .notApplicable }
+        let target: PageTitleTarget
+        switch PageTitleTarget.select(for: server, in: serverScan) {
+        case .ask(let selected): target = selected
+        case .notApplicable: return .notApplicable
+        case .shared: return .portShared
+        }
         switch pageTitles[target] {
         case nil: return serverIdle[server.id]?.isFlagged == true ? .skippedIdle : .pending
         case .title(let title)?: return .title(title)
@@ -273,7 +278,7 @@ public final class DevTidyStore {
         probeQuietUntil = probeQuietUntil.filter { live.contains($0.key) && $0.value > now }
         serverIdle = serverIdleTracker.update(samples, threshold: threshold, now: now)
         recomputeDerived()
-        let targets = Set(scan.servers.compactMap { PageTitleTarget.make(for: $0) })
+        let targets = Set(scan.servers.compactMap { PageTitleTarget.make(for: $0, in: scan) })
         if pageTitles.keys.contains(where: { !targets.contains($0) }) {
             pageTitles = pageTitles.filter { targets.contains($0.key) }
         }
@@ -404,7 +409,7 @@ public final class DevTidyStore {
         let now = services.now()
         let fetcher = services.pageTitles
         for server in serverScan.servers {
-            guard let target = PageTitleTarget.make(for: server), pageTitleTasks[target] == nil else { continue }
+            guard let target = PageTitleTarget.make(for: server, in: serverScan), pageTitleTasks[target] == nil else { continue }
             if serverIdle[server.id]?.isFlagged == true { continue }
             switch pageTitles[target] {
             case .title?, .noTitle?: continue
@@ -424,7 +429,8 @@ public final class DevTidyStore {
         // What the request set off in the server may go on for a moment after the answer: not the user's activity either.
         probeQuietUntil[target.server] = services.now().addingTimeInterval(Self.probeAfterglow)
         // The setting was switched off, or the server went away, while the request ran.
-        guard settings.fetchPageTitles, serverScan.servers.contains(where: { PageTitleTarget.make(for: $0) == target }) else { return }
+        guard settings.fetchPageTitles,
+              serverScan.servers.contains(where: { PageTitleTarget.make(for: $0, in: serverScan) == target }) else { return }
         pageTitles[target] = state
     }
 
@@ -1030,6 +1036,9 @@ public enum PageTitleStatus: Equatable, Sendable {
     case disabled
     /// The server has no port that may be asked (inspector only, bound to one non-loopback address, no port).
     case notApplicable
+    /// Every loopback address that reaches the server's socket is taken by another process on the same port (a Docker container
+    /// published on the port too): the answer would not be the server's, so DevTidy does not ask.
+    case portShared
     /// Not asked yet (popover on another tab) or the request is running.
     case pending
     case title(String)

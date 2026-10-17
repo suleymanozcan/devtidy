@@ -45,10 +45,42 @@ public enum BindScope: String, Sendable, Codable {
     case other
 }
 
+/// The local address of one listening TCP socket, as libproc reports it. A process often has an IPv4 and an IPv6 socket on the
+/// same port; they are different sockets and a connection reaches exactly one of them (`BindAddress.claim(on:)` in the page-title
+/// code decides which).
+public enum BindAddress: Hashable, Sendable {
+    /// An IPv4 socket (`0.0.0.0` is the wildcard), or an IPv6 socket bound to a v4-mapped address (`::ffff:a.b.c.d`): only IPv4
+    /// connections reach either.
+    case ipv4(UInt8, UInt8, UInt8, UInt8)
+    /// An IPv6 socket. `high` / `low` are the first and last 8 address bytes, big-endian. `dualStack` is true only for the
+    /// wildcard `::` with `IPV6_V6ONLY` off (libproc reports INI_IPV4 and INI_IPV6 together): the one IPv6 bind that IPv4
+    /// connections reach as well.
+    case ipv6(high: UInt64, low: UInt64, dualStack: Bool)
+
+    public static let ipv4Wildcard = BindAddress.ipv4(0, 0, 0, 0)
+    public static let ipv6Loopback = BindAddress.ipv6(high: 0, low: 1, dualStack: false)
+    public static func ipv6Wildcard(dualStack: Bool) -> BindAddress { .ipv6(high: 0, low: 0, dualStack: dualStack) }
+
+    public var scope: BindScope {
+        switch self {
+        case .ipv4(let a, let b, let c, let d):
+            if a == 127 { return .loopback }
+            return (a, b, c, d) == (0, 0, 0, 0) ? .allInterfaces : .other
+        case .ipv6(let high, let low, _):
+            if high == 0 && low == 1 { return .loopback }
+            return high == 0 && low == 0 ? .allInterfaces : .other
+        }
+    }
+}
+
 public struct ListeningPort: Hashable, Sendable, Identifiable {
     public let port: UInt16
     public let ownerPID: Int32
+    /// The widest scope among the owner's sockets on `port`.
     public let scope: BindScope
+    /// The local address of every listening socket the owner has on `port` (one process: a v4 and a v6 socket are common). A
+    /// socket whose address libproc could not decode is not in it.
+    public let binds: Set<BindAddress>
     /// ESTABLISHED sockets owned by the same process whose local port == `port` (server-side accepted sockets).
     public let establishedConnections: Int
     public var id: String { "\(ownerPID):\(port)" }
@@ -276,7 +308,11 @@ public struct ServerScan: Sendable {
     public let takenAt: Date
     public let servers: [DevServer]
     public let others: [OtherListener]
-    public static let empty = ServerScan(takenAt: .distantPast, servers: [], others: [])
+    /// Every own-uid listening socket of the scan by owner pid, including the ones the classifier lists nowhere (Docker's port
+    /// proxy, DevTidy and its ancestors). A server's own sockets are only ever asked when no other process's socket on the same
+    /// port would take the connection instead (`PageTitleTarget`).
+    public let listeners: [Int32: [ListeningPort]]
+    public static let empty = ServerScan(takenAt: .distantPast, servers: [], others: [], listeners: [:])
 }
 
 public struct TerminationPolicy: Sendable {

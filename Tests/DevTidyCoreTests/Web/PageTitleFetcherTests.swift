@@ -6,8 +6,10 @@ import Darwin
 /// Every request in this file goes to a server the test starts itself on a kernel-chosen loopback port.
 @Suite("PageTitleFetcher")
 struct PageTitleFetcherTests {
-    private func target(_ port: UInt16, pid: Int32 = 100, started: Int64 = 1_800_000_000) -> PageTitleTarget {
-        PageTitleTarget(server: ProcessIdentity(pid: pid, startSeconds: started, startMicroseconds: 0), port: port)
+    private func target(_ port: UInt16, pid: Int32 = 100, started: Int64 = 1_800_000_000,
+                        addresses: [LoopbackAddress] = [.ipv4(127, 0, 0, 1)]) -> PageTitleTarget {
+        PageTitleTarget(server: ProcessIdentity(pid: pid, startSeconds: started, startMicroseconds: 0), port: port,
+                        addresses: addresses)
     }
 
     private func fetcher(_ clock: S4Clock = S4Clock(), total: TimeInterval = 3, cap: Int = 256 * 1024,
@@ -57,11 +59,76 @@ struct PageTitleFetcherTests {
         #expect(await fetcher().title(for: target(server.port)) == .title("Tom & Jerry — Admin"))
     }
 
-    @Test func aServerBoundToIPv6LoopbackOnlyIsReachedAfterIPv4IsRefused() async throws {
+    @Test func aServerBoundToIPv6LoopbackIsAskedOnIPv6() async throws {
         let server = try LoopbackTestServer(ipv6: true) { _, _ in .html(page("Only v6")) }
         defer { server.stop() }
-        #expect(await fetcher().title(for: target(server.port)) == .title("Only v6"))
+        #expect(await fetcher().title(for: target(server.port, addresses: [.ipv6])) == .title("Only v6"))
         #expect(server.requests.first?.headers["host"] == "[::1]:\(server.port)")
+    }
+
+    @Test func aRefusedAddressIsFollowedByTheNextOne() async throws {
+        let server = try LoopbackTestServer(ipv6: true) { _, _ in .html(page("Second")) }
+        defer { server.stop() }
+        let state = await fetcher().title(for: target(server.port, addresses: [.ipv4(127, 0, 0, 1), .ipv6]))
+        #expect(state == .title("Second"))
+        #expect(server.requests.count == 1)
+    }
+
+    @Test func aTargetWithoutAnAddressIsNeverFetched() async throws {
+        let server = try LoopbackTestServer { _, _ in .html(page("Nobody asked")) }
+        defer { server.stop() }
+        let clock = S4Clock()
+        #expect(await fetcher(clock).title(for: target(server.port, addresses: [])) == .failed(retryAt: clock.now.addingTimeInterval(60)))
+        #expect(server.requests.isEmpty)
+    }
+
+    // MARK: Two sockets on one port: the answer comes from the one that was asked
+
+    @Test func theTitleComesFromTheRequestedAddressFamilyWhenTwoServersShareAPort() async throws {
+        let pair = try LoopbackTestServer.sharedPortPair(
+            v4: { _, _ in .html(page("Docker container")) },
+            v6: { _, _ in .html(page("Vite server")) })
+        defer { pair.v4.stop(); pair.v6.stop() }
+        let port = pair.v4.port
+        let fetcher = self.fetcher()
+
+        // The identity differs in the pid only so that every question is a fresh fetch.
+        #expect(await fetcher.title(for: target(port, pid: 1, addresses: [.ipv6])) == .title("Vite server"))
+        #expect(await fetcher.title(for: target(port, pid: 2, addresses: [.ipv4(127, 0, 0, 1)])) == .title("Docker container"))
+        #expect(await fetcher.title(for: target(port, pid: 3, addresses: [.ipv6, .ipv4(127, 0, 0, 1)])) == .title("Vite server"))
+        #expect(await fetcher.title(for: target(port, pid: 4, addresses: [.ipv4(127, 0, 0, 1), .ipv6])) == .title("Docker container"))
+        #expect(pair.v6.requests.map { $0.headers["host"] } == ["[::1]:\(port)", "[::1]:\(port)"])
+        #expect(pair.v4.requests.map { $0.headers["host"] } == ["127.0.0.1:\(port)", "127.0.0.1:\(port)"])
+    }
+
+    @Test func aRedirectStaysOnTheFamilyThatAnswered() async throws {
+        let port = S4Locked<UInt16>(0)
+        let pair = try LoopbackTestServer.sharedPortPair(
+            v4: { _, _ in .html(page("Docker container")) },
+            v6: { request, _ in
+                request.target == "/" ? .redirect(to: "http://localhost:\(port.snapshot)/home") : .html(page("Vite home"))
+            })
+        defer { pair.v4.stop(); pair.v6.stop() }
+        port.with { $0 = pair.v4.port }
+
+        // `localhost` in the Location is the address already in use, not a fresh choice between the two families.
+        #expect(await fetcher().title(for: target(pair.v4.port, addresses: [.ipv6])) == .title("Vite home"))
+        #expect(pair.v6.requests.map(\.target) == ["/", "/home"])
+        #expect(pair.v6.requests.last?.headers["host"] == "localhost:\(pair.v4.port)")
+        #expect(pair.v4.requests.isEmpty)
+    }
+
+    @Test func aRedirectToTheOtherFamilyIsRefusedAndNeverContacted() async throws {
+        let port = S4Locked<UInt16>(0)
+        let pair = try LoopbackTestServer.sharedPortPair(
+            v4: { _, _ in .html(page("Docker container")) },
+            v6: { _, _ in .redirect(to: "http://127.0.0.1:\(port.snapshot)/") })
+        defer { pair.v4.stop(); pair.v6.stop() }
+        port.with { $0 = pair.v4.port }
+
+        #expect(await fetcher().title(for: target(pair.v4.port, addresses: [.ipv6])) == .noTitle)
+        #expect(pair.v6.requests.count == 1)
+        #expect(pair.v4.requests.isEmpty)
     }
 
     // MARK: Once per server identity

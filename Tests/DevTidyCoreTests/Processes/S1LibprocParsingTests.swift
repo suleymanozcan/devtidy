@@ -53,10 +53,14 @@ import Testing
         #expect(Libproc.argv(Int32.max - 7).isEmpty)
     }
 
-    // MARK: Bind scope
+    // MARK: Bind address
+
+    private func bind(vflag: UInt8, _ address: [UInt8]) -> BindAddress? {
+        address.withUnsafeBytes { Libproc.bindAddress(vflag: vflag, address: $0) }
+    }
 
     private func scope(vflag: UInt8, _ address: [UInt8]) -> BindScope {
-        address.withUnsafeBytes { Libproc.bindScope(vflag: vflag, address: $0) }
+        bind(vflag: vflag, address)?.scope ?? .other
     }
 
     private func v4(_ a: UInt8, _ b: UInt8, _ c: UInt8, _ d: UInt8) -> [UInt8] { [UInt8](repeating: 0, count: 12) + [a, b, c, d] }
@@ -66,6 +70,13 @@ import Testing
         #expect(scope(vflag: 0x1, v4(127, 9, 9, 9)) == .loopback)
         #expect(scope(vflag: 0x1, v4(0, 0, 0, 0)) == .allInterfaces)
         #expect(scope(vflag: 0x1, v4(192, 168, 1, 20)) == .other)
+    }
+
+    @Test func ipv4BindsKeepTheExactAddress() {
+        #expect(bind(vflag: 0x1, v4(127, 0, 0, 1)) == .ipv4(127, 0, 0, 1))
+        #expect(bind(vflag: 0x1, v4(127, 9, 8, 7)) == .ipv4(127, 9, 8, 7))
+        #expect(bind(vflag: 0x1, v4(0, 0, 0, 0)) == .ipv4Wildcard)
+        #expect(bind(vflag: 0x1, v4(192, 168, 1, 20)) == .ipv4(192, 168, 1, 20))
     }
 
     @Test func ipv6ScopesIncludeDualStackWildcardsAndMappedV4() {
@@ -80,6 +91,23 @@ import Testing
         #expect(scope(vflag: 0x2, linkLocal) == .other)
         #expect(scope(vflag: 0x0, wildcard) == .other)
         #expect(scope(vflag: 0x1, [1, 2, 3]) == .other)              // short buffer
+    }
+
+    @Test func ipv6BindsKeepTheExactAddressAndTellDualStackFromV6Only() {
+        let wildcard = [UInt8](repeating: 0, count: 16)
+        var loopback = wildcard; loopback[15] = 1
+        var mappedLoopback = wildcard; mappedLoopback[10] = 0xFF; mappedLoopback[11] = 0xFF; mappedLoopback[12] = 127; mappedLoopback[15] = 1
+        var mappedWildcard = wildcard; mappedWildcard[10] = 0xFF; mappedWildcard[11] = 0xFF
+        var linkLocal = wildcard; linkLocal[0] = 0xFE; linkLocal[1] = 0x80; linkLocal[15] = 2
+        #expect(bind(vflag: 0x2, loopback) == .ipv6Loopback)                          // [::1]:5173, one family only
+        #expect(bind(vflag: 0x2, wildcard) == .ipv6Wildcard(dualStack: false))        // IPV6_V6ONLY
+        #expect(bind(vflag: 0x3, wildcard) == .ipv6Wildcard(dualStack: true))         // node's default `::`
+        #expect(bind(vflag: 0x2, linkLocal) == .ipv6(high: 0xFE80_0000_0000_0000, low: 2, dualStack: false))
+        // a v4-mapped bind is an IPv4 bind: only IPv4 connections reach it
+        #expect(bind(vflag: 0x2, mappedLoopback) == .ipv4(127, 0, 0, 1))
+        #expect(bind(vflag: 0x2, mappedWildcard) == .ipv4Wildcard)
+        #expect(bind(vflag: 0x0, wildcard) == nil)
+        #expect(bind(vflag: 0x1, [1, 2, 3]) == nil)
     }
 
     // MARK: Units

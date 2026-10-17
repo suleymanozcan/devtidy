@@ -6,11 +6,30 @@ Yerel geliştirme ortamı için macOS menü çubuğu uygulaması. Üç iş yapar
 - Projelerdeki yeniden üretilebilir derleme önbelleklerini (`.next`, `.nuxt`, `target`, `DerivedData` vb.) siler.
 - Docker konteynerlerini listeler; durdurur, siler, Compose projelerini `stop`/`down` yapar, build önbelleğini temizler.
 
-Uygulama yalnızca menü çubuğunda yaşar (Dock simgesi yok, `LSUIElement`). Uzak bir sunucuya bağlanmaz, telemetri göndermez; makineden dışarı giden bir şey yoktur. İki yerel kanalı vardır: Docker unix soketi ve, Sunucular sekmesi açıkken, her geliştirme sunucusunun kendi `127.0.0.1` / `::1` adresine gönderilen tek bir `GET /` isteği (sayfa başlığını okumak için; ayardan kapatılabilir, aşağıya bakın). Arayüz Türkçedir.
+Uygulama yalnızca menü çubuğunda yaşar (Dock simgesi yok, `LSUIElement`). Telemetri göndermez, sistem profili yollamaz. Tek dış bağlantısı güncelleme denetimidir: günde bir kez GitHub'dan `appcast.xml` ister (Ayarlar > Güncelleme'den kapatılabilir; ayrıntı için aşağıdaki "Güncellemeler" bölümüne bakın). Bunun dışında yalnızca iki yerel kanalı vardır: Docker unix soketi ve, Sunucular sekmesi açıkken, her geliştirme sunucusunun kendi `127.0.0.1` / `::1` adresine gönderilen tek bir `GET /` isteği (sayfa başlığını okumak için; ayardan kapatılabilir, aşağıya bakın). Arayüz Türkçedir.
+
+```bash
+brew install --cask suleymanozcan/tap/devtidy
+```
+
+<p align="center">
+  <img src="docs/screenshots/servers.png" width="290" alt="Sunucular sekmesi: proje başlığı, git dalı, sayfa başlığı ve Ayrıntılar">
+  <img src="docs/screenshots/docker.png" width="290" alt="Docker sekmesi: Compose projeleri, boştaki konteyner ve build önbelleği">
+</p>
+<p align="center">
+  <img src="docs/screenshots/builds.png" width="290" alt="Derlemeler sekmesi: projelere göre silinebilir önbellek boyutları">
+  <img src="docs/screenshots/cleanup.png" width="290" alt="Temizlik onayı: tam yollar, kalıcı silme ve Çöp Kutusu">
+</p>
+<p align="center">
+  <img src="docs/screenshots/menubar.png" width="165" alt="Menü çubuğu özeti: sunucu ve konteyner sayısı, toplam bellek, boştakiler">
+</p>
+<p align="center"><sub>Görüntülerdeki projeler, yollar ve süreçler örnek veridir.</sub></p>
 
 ## Ne gösterir
 
 **Menü çubuğu özeti.** `server.rack` simgesi; bir şey çalışıyorsa yanında `N · BELLEK` görünür (N = çalışan sunucu + çalışan konteyner sayısı, bellek = ikisinin toplamı). Bellek kısmı Ayarlar > Genel'den kapatılabilir. Boşta işaretli kaynak varsa sonuna uyku emojisiyle birlikte sayısı eklenir.
+
+**Pencere boyu.** Pencerenin altındaki tutamaç aşağı sürüklenince liste uzar, yukarı sürüklenince kısalır (en az 200 pt, en çok ekranın izin verdiği kadar). Seçilen boy kalıcıdır; tutamaca çift tıklayınca içeriğe göre otomatik boya (200–470 pt) döner.
 
 **Sunucular sekmesi.** Kullanıcıya ait süreçlerin dinleyen TCP soketlerinden bulunan geliştirme sunucuları **proje klasörüne göre** gruplanır: her proje kökü ayrı bir bölümdür (bölümler başlığa göre sıralanır; projesi bulunamayan sunucular her zaman en sonda "Proje bulunamadı" bölümündedir). Bölüm başlığı `depo › paket/yolu` biçimindedir (örn. `redalert › packages/client`; depo yoksa klasör adı; bağlı bir git çalışma ağacında ana deponun adı ve çalışma ağacının klasörü: `redalert (wt feature-x) › packages/client`) ve yanında git dalı etiketi bulunur (ayrık HEAD'de 7 karakterlik commit; uzun dal adı ortadan kısaltılır, tamamı ipucunda); başlığın üstüne gelince tam yol görünür. Satır başlığı, varsa sunucunun **sayfa başlığı** (`<title>`), yoksa manifest adı, o da yoksa klasör adıdır; altındaki satırda manifest `ad@sürüm` (başlıktan farklıysa) ve Framework adı yer alır (örn. `client@0.0.0 · Vite`). Aynı klasör adını taşıyan iki proje (iki `client`) bölüm başlıklarındaki depo/yol ile ayırt edilir. **Aynı satır başlığını taşıyan iki sunucu** (aynı depoyu iki farklı klasöre çıkarmış, ikisi de aynı sayfayı sunan iki checkout) için alt satır ayrıca neyin farklı olduğunu söyler: klasörler farklıysa `depo › yol`, dallar farklıysa `(dal)` ve her zaman port; örn. `redalert-perf › packages/client (perf-fx) · :5182 · @redalert/client@0.1.0 · Vite`. Satırda ayrıca port etiketleri, komut (gizli değerler maskelenir, aşağıya bakın), CPU, bellek ve çalışma süresi vardır. Varsayılan olarak kapalı **Ayrıntılar** bölümü şunları gösterir: Tam yol (`~` kısaltmalı, "Finder'da Göster" düğmesiyle), Git dalı, Paket (`ad@sürüm · dosya`), varsa Çalışma alanı (monorepo kök paketi), Sayfa başlığı (okunuyor / yok / okunamadı / kapalı / boşta olduğu için okunmadı), Framework, PID'ler (adlarıyla), Başlangıç (yerel saatle tarih ve geçen süre), Komut satırı (seçilebilir, kopyala düğmesiyle; **Durdur kartıyla aynı kuralla maskelenir ve kopyalanan metin de maskelidir**: `--token x`, `--pass`, `--auth`, `API_KEY=…` gibi `AD=değer` biçimleri, URL kullanıcı bilgisi, `?token=…` ve `sh -c '…'` betiğinin içindeki değerler `•••` olur; kontrol, biçim ve çift yönlü yazı karakterleri `�` ile değiştirilir; en çok 4000 karakter) ve denetleyici/geçici portlar dahil tüm portlar rolleriyle. Port etiketine tıklamak `http://localhost:PORT` adresini tarayıcıda açar; tüm arayüzlere açık (`0.0.0.0`) portta ağ simgesi çıkar. Geçici portlar (49152 ve üstü) ve denetleyici (inspector) portları etiket olmaz, `+N dahili` olarak sayılır: 9229–9231 ile sürecin `--inspect[-brk|-wait][=[host:]port]`, `--inspect-port` veya `--inspector-port` bayraklarıyla bildirdiği portlar. Sağ tık menüsü: Klasörü Finder'da Göster, Komutu Kopyala, Portu Kopyala. Sunucu sayılmayan dinleyiciler (araç, uygulama, sistem) Ayarlar > Genel'de "Diğer dinleyicileri göster" açılırsa salt okunur bir listede görünür; bunlar için durdurma düğmesi yoktur. Ekrana giden, dışarıdan gelen her ad (klasör, depo, çalışma alanı, süreç, paket, sayfa başlığı) önce temizlenir (görünmez karakterler atılır, bileşik karakter yığınları sınırlanır) ve düz metin olarak çizilir; Markdown olarak yorumlanmaz.
 
@@ -20,11 +39,12 @@ Uygulama yalnızca menü çubuğunda yaşar (Dock simgesi yok, `LSUIElement`). U
 
 - Yalnızca Sunucular sekmesi görünürken (temizlik ekranı açıkken değil) ve Ayarlar > Genel'deki **"Sayfa başlığını oku (localhost'a tek GET isteği)"** açıkken başlar; pencere kapalıyken ya da başka sekmedeyken yeni istek başlamaz. Kapatılınca hiç istek gitmez ve gösterilen başlıklar silinir. **Seçenek varsayılan olarak AÇIKTIR (kullanıcı tercihi); kapatmak isteyen Ayarlar > Genel'den kapatır.**
 - **Yan etki:** istek, sunucunun kendi günlüğünde bir `GET /` olarak görünür ve Next.js gibi çalışırken derleyen sunucularda ilk istek o sayfanın derlenmesini başlatabilir. Bu yüzden DevTidy (a) boşta işaretli ("Boşta" / "Muhtemelen boşta") bir sunucuya hiç istek göndermez, etkinleşince okur; (b) isteğin kendi bağlantısını ve CPU'sunu, yanıttan sonraki 5 saniyeyle birlikte, sunucunun etkinliği saymaz: sayfa başlığı okumak "boşta" sayacını sıfırlamaz ve işaretli bir sunucunun etiketini kaldırmaz.
-- Adres sunucunun kendi dinleme adresidir: önce `127.0.0.1`, bağlanamazsa `::1` (ayrı IPv4/IPv6 soketlerinden hangisine bağlıysa). İsimler çözümlenmez; loopback olmayan hiçbir adrese bağlanılmaz. Yalnızca `127.0.0.1`/`::1`'e ya da tüm arayüzlere bağlı portlar sorulur; belirli bir ağ adresine bağlı portlar, denetleyici (inspector) portları ve sunucu sayılmayan dinleyiciler sorulmaz.
+- Adres sunucunun kendi dinleme soketidir; başka bir sürecin aynı portta açtığı sokete asla istek gitmez. Sunucunun portundaki soketlerin gerçek bağlama adresleri okunur (libproc): belirli bir loopback adresine (`127.x.y.z`, `::1`) bağlıysa tam o adrese; IPv4 joker adrese (`0.0.0.0`) bağlıysa `127.0.0.1`'e; IPv6 joker adrese (`::`) bağlıysa `::1`'e (soket çift yığınlıysa ayrıca `127.0.0.1`'e) gider; birden çok adres varsa IPv4 önce denenir. Aynı taramada başka bir süreç aynı portu daha belirli (ya da eşit belirlilikte) bir adresle dinliyorsa o adrese bağlanılsaydı yanıtı o verirdi, bu yüzden o adres sorulmaz (örnek: Docker'ın yayımladığı `127.0.0.1:5173` ile sunucunun `[::1]:5173`'ü bir arada: yalnızca `::1` sorulur). Hiç adres kalmazsa istek gönderilmez ve Ayrıntılar "okunmadı (aynı portu başka bir süreç de dinliyor)" der. İsimler çözümlenmez; loopback olmayan hiçbir adrese bağlanılmaz. Yalnızca loopback'e ya da tüm arayüzlere bağlı portlar sorulur; belirli bir ağ adresine bağlı portlar, denetleyici (inspector) portları ve sunucu sayılmayan dinleyiciler sorulmaz. Yalnızca kendi kullanıcınızın süreçleri görülür: başka bir kullanıcıya ait bir süreç aynı portu dinliyorsa bu fark edilemez.
 - `Accept: text/html`, `Connection: close`; çerez yok, önbellek yok, vekil sunucu yok (ham soket istemcisi; bu yüzden `Info.plist`'e App Transport Security istisnası gerekmez). Bağlanma zaman aşımı adres başına 1,5 sn, toplam 3 sn, gövde en çok 256 KB; `<title>` bulunup `</head>` geçilince okuma durur.
-- Yalnızca 2xx ve `text/html` yanıtlar ayrıştırılır (sıkıştırılmış yanıt istenmez ve yok sayılır). En çok 2 yönlendirme izlenir, yalnızca `http://` ve aynı portta loopback adresine (`127.x.y.z`, `localhost`, `[::1]`); başka bir ana makineye, başka porta, `https`'e yönlendirme izlenmez.
+- Yalnızca 2xx ve `text/html` yanıtlar ayrıştırılır (sıkıştırılmış yanıt istenmez ve yok sayılır). En çok 2 yönlendirme izlenir, yalnızca `http://` ve aynı portta, yanıtı veren bağlantıyla aynı loopback adresine: `localhost` o anda kullanılan adres demektir; başka bir `127.x.y.z` ya da `[::1]` başka bir soket olduğu için izlenmez. Başka bir ana makineye, başka porta, `https`'e yönlendirme de izlenmez.
 - `<title>` büyük/küçük harfe ve satır sonlarına bakmadan bulunur (yorum, `<script>`, `<style>` içindekiler ve `<body>` sonrası sayılmaz), yaygın HTML varlıkları çözülür (`&amp;`, `&#8212;`, `&mdash;` …), boşluklar tek boşluğa indirilir, en çok 120 karakterle (ve 480 Unicode skalerle) sınırlanır; görünmez karakterler (sıfır genişlikli, çift yönlü, etiket karakterleri), temelsiz ve 4'ten fazla birleştirme işareti ve 3'ten uzun sıfır genişlikli birleştirici zincirleri atılır; görünür hiçbir şey kalmazsa başlık yoktur. Şablon/yer tutucu başlıklar başlık sayılmaz: `Vite App`, her `Vite + <çerçeve>` (`Vite + React`, `Vite + Vue`, `Vite + React + TS` …), `React App`, `Create Next App`, `Next.js`, `Document`, `Untitled`, `Error`, `localhost[:port]`, `127.0.0.1[:port]`, `Index of /`, `Directory listing for /` ve boş başlıklar.
 - Sonuç sunucu kimliği başına bir kez alınır ve saklanır; bağlanılamazsa / zaman aşımı olursa / 5xx dönerse 60 saniye sonra en çok bir kez daha denenir (HTTPS kullanan bir sunucu düz bir isteğe yanıt vermez; Ayrıntılar bunu ipucuyla söyler). Sunucu kapanınca DevTidy'nin tuttuğu kayıt silinir; okuyucunun kendi önbelleği (en çok 256 hedef) ise en eski kayıt atılarak sınırlı kalır. Ara `1xx` yanıtları (`103 Early Hints`) atlanır.
+- Önbellek kimliği sunucu kimliği + port + sorulan adres listesidir: adresler değişirse (örneğin bir konteyner aynı portu yayımlamaya başlarsa) daha önce okunan başlık yeniden kullanılmaz ve yeniden okunur. Hiçbir başlık diske yazılmaz; kayıtlar yalnızca bellektedir ve uygulama yeniden başlayınca sıfırlanır.
 
 **Docker sekmesi.** Compose projeleri ve tek başına konteynerler; durum noktası, imaj, yayımlanan port etiketleri, CPU/bellek/süre, sağlıksız konteyner işareti. Üstte "Build önbelleği: toplam (en çok X temizlenebilir)" satırı bulunur; "ölçülüyor…" yalnızca istek sürerken görünür, ölçüm başarısız olursa nedeni ve "Yeniden Dene" düğmesi gösterilir. Docker kurulu değilse veya çalışmıyorsa sekme bunu söyler ("Docker Desktop'ı Aç" düğmesi `/Applications/Docker.app` uygulamasını açar); uzak/ssh bağlamı gibi desteklenmeyen bir yapılandırmada nedenini, Colima/OrbStack ipucunu ve "Yeniden Dene" düğmesini gösterir.
 
@@ -86,6 +106,52 @@ Menü çubuğunda `server.rack` simgesi belirir. Kapatmak için açılır pencer
 
 Oturum açılışında otomatik başlatma uygulamada yoktur.
 
+## Güncellemeler
+
+DevTidy kendini [Sparkle 2](https://sparkle-project.org) ile günceller (Sparkle uygulamaya gömülüdür: `DevTidy.app/Contents/Frameworks/Sparkle.framework`).
+
+- **Otomatik denetim.** Uygulama açılışta ve sonra günde bir kez (Sparkle'ın varsayılan 24 saatlik aralığı) GitHub'daki `appcast.xml` dosyasına bakar. Yeni sürüm varsa Sparkle'ın standart penceresi çıkar ve öne alınır: menü çubuğu uygulamasının Dock simgesi olmadığı için arkada kalıp gözden kaçmasın diye uygulama pencereden hemen önce etkinleştirilir. Pencere sürümü gösterir; onaylayınca Sparkle indirir, imzayı doğrular, kurar ve DevTidy'yi yeniden başlatır. Pencere Türkçedir: `Info.plist` `CFBundleDevelopmentRegion` olarak `tr` bildirir, bu yüzden Sparkle kendi `tr.lproj` metinlerini kullanır.
+- **Elle denetim.** Ayarlar (⌘,) > **Güncelleme** > **Güncellemeleri Denetle…**. Bir denetim ya da güncelleme oturumu sürerken düğme devre dışıdır. Aynı sekmede kurulu sürüm ve build numarası görünür.
+- **Ayar anahtarları.** Aynı sekmede iki seçenek bulunur: **Güncellemeleri otomatik denetle** (varsayılan açık) ve **Güncellemeleri otomatik indir ve kur** (varsayılan kapalı; yalnızca otomatik denetim açıkken seçilebilir). Değerler Sparkle'ın kendi tercih anahtarlarındadır (`SUEnableAutomaticChecks`, `SUAutomaticallyUpdate`), `devtidy.settings.v1` içinde değil. Otomatik denetim kapalıyken güncelleme yalnızca düğmeyle aranır.
+- **Doğrulama.** İndirilen DMG, açılmadan önce (`SUVerifyUpdateBeforeExtraction`) uygulamaya gömülü genel EdDSA anahtarıyla (`SUPublicEDKey`) doğrulanır; tutmayan paket kurulmaz. DMG ayrıca Developer ID ile imzalı ve Apple tarafından notarize edilmiştir. Uygulama sandbox içinde çalışmadığı için Sparkle'ın XPC servisleri kullanılmaz ve pakete konmaz.
+- **Ağ ve gizlilik.** Güncelleme denetimi DevTidy'nin tek dış bağlantısıdır: günde bir kez `https://github.com/suleymanozcan/devtidy/releases/latest/download/appcast.xml` adresine HTTPS `GET` (GitHub bunu en son sürümün `appcast.xml` dosyasına yönlendirir); yalnızca yeni sürüm bulunup onaylandığında (ya da otomatik indirme açıkken kendiliğinden) DMG indirilir. GitHub isteği alırken IP adresinizi ve Sparkle'ın standart `User-Agent` başlığını (uygulama adı ve sürümü) görür; anonim sistem profili gönderilmez (`SUEnableSystemProfiling` kapalı). Hiç dış bağlantı istemiyorsanız Ayarlar > Güncelleme'den otomatik denetimi kapatın; o zaman yalnızca **Güncellemeleri Denetle…** düğmesi GitHub'a bağlanır. Başka bir uzak sunucu yoktur.
+- **Konum.** Sparkle çalışan kopyayı yerinde değiştirir; DMG'nin içinden (salt okunur birimden) çalıştırılan kopya güncellenemez, Sparkle bunu söyler. Kaynaktan kurulan (`scripts/install.sh`, ad hoc imzalı) kopya da aynı akışı kullanır.
+
+### Homebrew ile kuranlar
+
+Cask `auto_updates true` taşır: Homebrew uygulamanın kendini güncellediğini bilir, bu yüzden `brew upgrade` DevTidy'yi **atlar** (`--greedy` verilmedikçe). Sürümü Homebrew üzerinden de ilerletmek isterseniz `brew upgrade --cask --greedy devtidy`.
+
+**0.1.0'dan geçiş.** 0.1.0 sürümünde Sparkle yoktur, kendini güncelleyemez. 0.1.0 kuruluysa bir kez elle yükseltin: `brew upgrade --cask devtidy` (ya da yeni DMG'yi indirip `Applications`'a sürükleyin). Bundan sonraki sürümler uygulamanın içinden gelir.
+
+### Bakımcı: Sparkle anahtarı ve yayın
+
+**Bir kerelik anahtar kurulumu.** Güncellemeler EdDSA anahtarıyla imzalanır. Anahtar çifti bir kez üretilir; özel anahtar oturum açma anahtarlığında (login keychain) durur, diske ve depoya yazılmaz:
+
+```bash
+swift package resolve                                         # Sparkle araçlarını .build/artifacts/sparkle/Sparkle/bin/ altına indirir
+.build/artifacts/sparkle/Sparkle/bin/generate_keys            # anahtarı üretir ve genel anahtarı yazdırır (var olanı yeniden üretmez)
+.build/artifacts/sparkle/Sparkle/bin/generate_keys -p         # yalnızca genel anahtarı yazdırır
+```
+
+Genel anahtar `Resources/Info.plist` içinde `SUPublicEDKey` olarak durur (şu anki değer depodadır). **Özel anahtarı yedekleyin**: Mac silinirse ya da anahtarlık kaybolursa yeni sürümler imzalanamaz ve mevcut kurulumlar onları reddeder.
+
+```bash
+.build/artifacts/sparkle/Sparkle/bin/generate_keys -x ~/güvenli-yer/devtidy-sparkle-anahtar   # özel anahtarı dosyaya aktarır
+.build/artifacts/sparkle/Sparkle/bin/generate_keys -f ~/güvenli-yer/devtidy-sparkle-anahtar   # yeni Mac'te içe aktarır
+```
+
+Yedek dosyası depoya girmemeli, parola yöneticisi ya da şifreli bir diskte durmalıdır. Anahtar yine de kaybolursa Sparkle anahtar döndürmeye (key rotation) izin verir: Developer ID imzası aynı kaldığı sürece, yeni bir EdDSA anahtarıyla imzalanmış ve `Info.plist`'inde yeni `SUPublicEDKey` taşıyan bir güncelleme yayınlanabilir (`SUVerifyUpdateBeforeExtraction` açık olduğundan DMG'nin Developer ID imzalı olması şarttır; öyledir). Sertifika ile anahtar aynı güncellemede birlikte değiştirilemez; yedek yine de asıl güvencedir.
+
+**`scripts/release.sh` artık şunları da yapar.**
+
+1. Ön kontrol: `Info.plist`'teki `SUFeedURL`'nin `https://github.com/suleymanozcan/devtidy/releases/latest/download/appcast.xml` olduğunu, Sparkle araçlarının indiğini, anahtarlıkta özel anahtarın bulunduğunu (`generate_keys -p` başarılı) ve onun genel anahtarının `SUPublicEDKey` ile birebir aynı olduğunu doğrular. Biri tutmazsa hiçbir şey yayınlanmaz.
+2. `CFBundleVersion` olarak `date +%Y%m%d%H%M` zaman damgasını (`BUILD`) açıkça üretip `bundle.sh`'a verir. Sparkle sürümleri bu sayıyla karşılaştırır, bu yüzden her sürümde artmalıdır; aynı değer appcast'teki `sparkle:version` olur (`sparkle:shortVersionString` = `VERSION`).
+3. DMG notarize edilip staple'landıktan **sonra** `sign_update dist/DevTidy-<sürüm>.dmg` ile `sparkle:edSignature` ve `length` değerlerini alır (staple dosyayı değiştirdiği için daha önce imzalanamaz), imzayı `sign_update --verify` ile doğrular.
+4. `scripts/appcast.sh` ile tek öğeli `dist/appcast.xml` yazar (başlık, `pubDate`, `sparkle:version`, `sparkle:shortVersionString`, `sparkle:minimumSystemVersion` 14.0, `https://github.com/suleymanozcan/devtidy/releases/download/v<sürüm>/DevTidy-<sürüm>.dmg` adresli `enclosure`) ve `xmllint --noout` ile doğrular.
+5. Etiket push edildikten sonra DMG ve `appcast.xml` dosyalarını **aynı** `gh release create` komutuyla yükler: `releases/latest/download/appcast.xml` her zaman en son sürümün appcast'ine çözülür.
+
+`bundle.sh` Sparkle.framework'ü SwiftPM'in indirdiği ikili artifact'tan (`.build/artifacts/sparkle/Sparkle/Sparkle.xcframework`) `Contents/Frameworks` içine `ditto` ile kopyalar (simgeli bağlar korunur), XPC servislerini ve başlık dosyalarını çıkarır ve içten dışa şu sırayla imzalar (`--deep` yok; kimlik verilirse `--options runtime --timestamp`): `Autoupdate` → `Updater.app` → `Sparkle.framework` → `DevTidy.app`. Ad hoc modda aynı sırayla ad hoc imzalanır.
+
 ## Kaldırma
 
 Homebrew ile kurduysanız:
@@ -94,7 +160,7 @@ Homebrew ile kurduysanız:
 brew uninstall --zap --cask devtidy
 ```
 
-`--zap` uygulamayla birlikte denetim günlüğünü (`~/Library/Logs/DevTidy/`) ve tercihleri (`~/Library/Preferences/dev.minata.DevTidy.plist`) de siler; `--zap` olmadan yalnızca uygulama kaldırılır.
+`--zap` uygulamayla birlikte denetim günlüğünü (`~/Library/Logs/DevTidy/`), tercihleri (`~/Library/Preferences/dev.minata.DevTidy.plist`) ve Sparkle'ın indirme önbelleğini (`~/Library/Caches/dev.minata.DevTidy`) de siler; `--zap` olmadan yalnızca uygulama kaldırılır.
 
 DMG ile kurduysanız DevTidy'den çıkın ve `/Applications/DevTidy.app` klasörünü silin; kaynaktan kurduysanız `~/Applications/DevTidy.app` klasörünü silin. Bu iki durumda denetim günlüğü `~/Library/Logs/DevTidy/` altında kalır, isterseniz elle silin.
 
@@ -168,7 +234,7 @@ Aşağıdakiler kodda uygulanır ve testlerle sınanır; dosya adları parantez 
 
 ### Sayfa başlığı okuma (`Web/LoopbackHTTP.swift`, `Web/PageTitleFetcher.swift`, `Web/HTMLTitle.swift`)
 
-- Ağdan dışarı hiçbir şey gitmez: istemci yalnızca `127.0.0.0/8` sayısal adreslerine, `localhost`'a ve `::1`'e bağlanır; ana makine adları çözümlenmez. Yönlendirmeler başka bir ana makineye, başka bir porta, `https`'e, kullanıcı bilgili (`user@`) adrese ya da kontrol karakteri içeren hedefe izlenmez (bağlantı kurulmadan önce reddedilir).
+- Sayfa başlığı istemcisi ağdan dışarı hiçbir şey göndermez: yalnızca kendisine verilen loopback adreslerine (`127.0.0.0/8` sayısal adresleri ve `::1`; sunucunun kendi soketi) bağlanır; yönlendirmedeki `localhost` o anda kullanılan adres sayılır, ana makine adları çözümlenmez. Yönlendirmeler başka bir ana makineye, başka bir porta, başka bir loopback adresine, `https`'e, kullanıcı bilgili (`user@`) adrese ya da kontrol karakteri içeren hedefe izlenmez (bağlantı kurulmadan önce reddedilir). Uygulamanın tek dış bağlantısı Sparkle'ın güncelleme denetimidir ("Güncellemeler" bölümü).
 - Her istek sınırlıdır: toplam 3 sn, adres başına 1,5 sn bağlanma, en çok 256 KB gövde, en çok 2 yönlendirme; gövde sınırında veya `</head>` sonrasında bağlantı kapatılır. Çerez, önbellek, kimlik bilgisi ve vekil sunucu kullanılmaz (BSD soketi; URLSession/ATS yok).
 - Sunucu kimliği başına en çok bir istek (+ başarısızlık için 60 sn sonra bir yeniden deneme); yalnızca Sunucular sekmesi görünürken ve Ayarlar > Genel'deki seçenek açıkken. Seçenek kapalıyken hiçbir istek gönderilmez.
 - Dışarıdan gelen metin (sayfa başlığı, manifest adı, klasör/depo/çalışma alanı/süreç adı, dal) ekrana varmadan önce temizlenir: kontrol, biçim (sıfır genişlikli, çift yönlü, etiket) karakterleri ve satır sonları atılır, boşluklar tek boşluğa iner, birleştirme işareti yığınları (taban başına en çok 4) ve sıfır genişlikli birleştirici zincirleri (en çok 3) kısaltılır, uzunluk karakterle değil Unicode skaler sayısıyla sınırlanır (120 karakter, en çok 480 skaler); görünür bir şey kalmayan ad ya da başlık gösterilmez (yerine manifest/klasör adı gelir). Yollar ve komut satırları boşlukları korunarak gösterilir, görünmez karakterler `�` ile değiştirilir. Metin `Text(verbatim:)` ile çizilir (Markdown/yerelleştirme anahtarı olarak yorumlanmaz); HTML hiçbir zaman çalıştırılmaz veya görüntülenmez.
@@ -193,6 +259,8 @@ Açılır pencerede `Ayarlar…` (⌘,). Değerler `UserDefaults` içinde `devti
 | Boşta | Konteyner: sessiz kalma süresi | 15 dk | 1–480 dk |
 | Boşta | CPU eşiği | %1 | %0,5–%20 |
 | Docker | Docker soket yolu | boş (otomatik bulunur) | |
+| Güncelleme | Güncellemeleri otomatik denetle | açık (`SUEnableAutomaticChecks`) | |
+| Güncelleme | Güncellemeleri otomatik indir ve kur | kapalı (`SUAutomaticallyUpdate`) | yalnızca otomatik denetim açıkken |
 
 "Koşullu öğeleri kalıcı sil" seçeneği ayrı bir ayar sekmesinde değil, temizlik ekranında bulunur (yukarıya bakın).
 
@@ -225,14 +293,14 @@ Testler swift-testing ile yazılmıştır (`Tests/DevTidyCoreTests`). Docker tes
 |---|---|---|
 | `CDevTidyShim` | `Sources/CDevTidyShim` | Çok küçük C katmanı: `openat`/`fstatat` için `O_NOFOLLOW_ANY` sarmalayıcıları (3 fonksiyon) |
 | `DevTidyCore` | `Sources/DevTidyCore` | Arayüzsüz mantık. `Shared/` (modeller, protokoller, komut çalıştırıcı), `Processes/` (libproc tarama, sunucu sınıflandırma, süreç ağacı sonlandırma), `Projects/` (proje tespiti ve kimliği, önbellek kataloğu, tarayıcı, temizleyici, `SafeFS`, denetim günlüğü), `Web/` (yalnızca loopback HTTP istemcisi, sayfa başlığı ayrıştırıcı ve `PageTitleFetcher`), `Docker/` (Engine API istemcisi, unix soket HTTP, Compose CLI, `ToolLocator`), `Store/` (`DevTidyStore`, ayarlar, yoklama, boşta takibi, temizlik akışı) |
-| `DevTidy` | `Sources/DevTidy` | SwiftUI menü çubuğu uygulaması: `DevTidyApp`, `MenuBarLabel`, `PopoverRoot`, `ServersTab`, `DockerTab`, `BuildsTab`, `CleanupSheet`, `SettingsView`, `Components`, `Formatting` |
+| `DevTidy` | `Sources/DevTidy` | SwiftUI menü çubuğu uygulaması: `DevTidyApp`, `Updater` (Sparkle sarmalayıcısı), `MenuBarLabel`, `PopoverRoot`, `ServersTab`, `DockerTab`, `BuildsTab`, `CleanupSheet`, `SettingsView`, `Components`, `Formatting` |
 | `DevTidyCoreTests` | `Tests/DevTidyCoreTests` | `Processes/`, `Projects/`, `Docker/`, `Web/`, `Store/`, `Smoke/` |
 
-Ayrıca `Resources/Info.plist` (paket şablonu), `scripts/` (`bundle.sh`, `dmg.sh`, `cask.sh`, `release.sh`, `install.sh`, `smoke.sh`) ve `packaging/homebrew-tap/` (tap deposunun ilk içeriği: README ve `audit.yml` iş akışı) vardır.
+Ayrıca `Resources/Info.plist` (paket şablonu; Sparkle anahtarlarını `SUFeedURL`, `SUPublicEDKey` içerir), `scripts/` (`bundle.sh`, `dmg.sh`, `cask.sh`, `appcast.sh`, `release.sh`, `install.sh`, `smoke.sh`) ve `packaging/homebrew-tap/` (tap deposunun ilk içeriği: README ve `audit.yml` iş akışı) vardır. Tek harici bağımlılık Sparkle'dır (`Package.swift`, SwiftPM ikili artifact'ı).
 
 ## Sürüm yayınlama (bakımcı)
 
-Sürümler yerel Mac'ten `scripts/release.sh` ile yayınlanır (GitHub Actions derleme hattı yoktur). Hat: Developer ID ile imzalı evrensel `.app` → notarization + staple → imzalı DMG → notarization + staple → etiket + GitHub release → `suleymanozcan/homebrew-tap` içindeki `Casks/devtidy.rb`.
+Sürümler yerel Mac'ten `scripts/release.sh` ile yayınlanır (GitHub Actions derleme hattı yoktur). Hat: Developer ID ile imzalı evrensel `.app` (Sparkle gömülü) → notarization + staple → imzalı DMG → notarization + staple → Sparkle `appcast.xml` → etiket + GitHub release (DMG + `appcast.xml`) → `suleymanozcan/homebrew-tap` içindeki `Casks/devtidy.rb`.
 
 ### Bir kerelik hazırlık
 
@@ -252,11 +320,11 @@ Sürümler yerel Mac'ten `scripts/release.sh` ile yayınlanır (GitHub Actions d
 scripts/release.sh 0.1.0
 ```
 
-Önce yan etkisiz bir ön kontrol çalışır; eksik her şey Türkçe mesaj ve düzeltme komutuyla birlikte topluca listelenir: sürüm biçimi (`MAJOR.MINOR.PATCH`), temiz çalışma ağacı ve `main` dalı, `v<sürüm>` etiketinin yerelde ve `origin`'de olmaması, `origin/main`'in yerel `main` ile aynı olması, `gh auth status`, Developer ID Application kimliği ve `notarytool` profili. Ön kontrol geçerse sırayla: `swift test`, `scripts/bundle.sh` (imzalı), `.app` notarization + staple + `spctl`, `scripts/dmg.sh` (imzalı), DMG notarization + staple + `spctl`, sha256, etiket + push, `gh release create`, tap güncellemesi (tap yoksa `packaging/homebrew-tap/` içeriğinden public olarak oluşturulur). Etiket push edilene kadar herhangi bir adım başarısız olursa dışarıda hiçbir şey yayınlanmamıştır.
+Önce yan etkisiz bir ön kontrol çalışır; eksik her şey Türkçe mesaj ve düzeltme komutuyla birlikte topluca listelenir: sürüm biçimi (`MAJOR.MINOR.PATCH`), temiz çalışma ağacı ve `main` dalı, `v<sürüm>` etiketinin yerelde ve `origin`'de olmaması, `origin/main`'in yerel `main` ile aynı olması, `gh auth status`, Developer ID Application kimliği, `notarytool` profili ve Sparkle (`SUFeedURL`, anahtarlıktaki EdDSA özel anahtarının genel yarısı = `SUPublicEDKey`; bkz. "Güncellemeler › Bakımcı"). Ön kontrol geçerse sırayla: `swift test`, `scripts/bundle.sh` (imzalı, açık `BUILD`), `.app` notarization + staple + `spctl`, `scripts/dmg.sh` (imzalı), DMG notarization + staple + `spctl`, sha256, `sign_update` + `dist/appcast.xml` (+ `xmllint`), etiket + push, `gh release create` (DMG ve `appcast.xml`), tap güncellemesi (tap yoksa `packaging/homebrew-tap/` içeriğinden public olarak oluşturulur). Etiket push edilene kadar herhangi bir adım başarısız olursa dışarıda hiçbir şey yayınlanmamıştır.
 
 Ortam değişkenleri: `SIGN_TEAM` (imzalayan Developer ID sahibi, varsayılan `Minata Entertainment, LLC`; kimlik yalnızca bu adla seçilir ve imzalanan `.app`'in `Authority` satırı yayından önce bununla doğrulanır), `SIGN_IDENTITY` (aynı ada ait birden fazla sertifika varsa SHA-1 ya da tam ad), `NOTARY_PROFILE` (varsayılan `devtidy-notary`).
 
-Parçalar tek başına da kullanılabilir: `scripts/dmg.sh <app> <sürüm>` → `dist/DevTidy-<sürüm>.dmg` (`SIGN=<kimlik>` DMG'yi imzalar); `scripts/cask.sh <sürüm> <sha256>` cask'i stdout'a yazar (cask şablonunun tek kaynağı).
+Parçalar tek başına da kullanılabilir: `scripts/dmg.sh <app> <sürüm>` → `dist/DevTidy-<sürüm>.dmg` (`SIGN=<kimlik>` DMG'yi imzalar); `scripts/cask.sh <sürüm> <sha256>` cask'i stdout'a yazar (cask şablonunun tek kaynağı); `scripts/appcast.sh <sürüm> <build> <length> <edSignature>` appcast'i stdout'a yazar (appcast şablonunun tek kaynağı).
 
 ## Bilinen sınırlamalar
 

@@ -290,20 +290,25 @@ struct ServerPresentationTests {
 
     @Test func theTargetIsTheMainPortOfADevServer() {
         let server = S4.server(pid: 10, project: project, port: 5182)
-        let target = PageTitleTarget.make(for: server)
+        let target = PageTitleTarget.make(for: server, in: S4.scan([server]))
         #expect(target?.port == 5182)
         #expect(target?.server == server.id)
     }
 
     @Test(arguments: [UInt16(9229), 9230, 9231])
     func inspectorPortsAreNeverAsked(port: UInt16) {
-        #expect(PageTitleTarget.make(for: S4.server(pid: 10, project: project, port: port)) == nil)
+        let server = S4.server(pid: 10, project: project, port: port)
+        #expect(PageTitleTarget.make(for: server, in: S4.scan([server])) == nil)
     }
 
     @Test func aServerBoundToOneNonLoopbackAddressIsNeverAsked() {
-        #expect(PageTitleTarget.make(for: S4.server(pid: 10, project: project, port: 5182, scope: .other)) == nil)
-        #expect(PageTitleTarget.make(for: S4.server(pid: 10, project: project, port: 5182, scope: .allInterfaces)) != nil)
-        #expect(PageTitleTarget.make(for: S4.server(pid: 10, project: project, port: 5182, scope: .loopback)) != nil)
+        func target(_ scope: BindScope) -> PageTitleTarget? {
+            let server = S4.server(pid: 10, project: project, port: 5182, scope: scope)
+            return PageTitleTarget.make(for: server, in: S4.scan([server]))
+        }
+        #expect(target(.other) == nil)
+        #expect(target(.allInterfaces) != nil)
+        #expect(target(.loopback) != nil)
     }
 
     @Test func aServerWithoutAMainPortIsNeverAsked() {
@@ -311,6 +316,6 @@ struct ServerPresentationTests {
         let portless = DevServer(root: base.root, members: base.members, ports: [], mainPort: nil, project: project, kind: .node,
                                  confidence: .high, command: "x", cpuPercent: nil, memoryBytes: 0, establishedConnections: 0,
                                  hints: base.hints, groupKillEligible: true)
-        #expect(PageTitleTarget.make(for: portless) == nil)
+        #expect(PageTitleTarget.make(for: portless, in: S4.scan([portless])) == nil)
     }
 }

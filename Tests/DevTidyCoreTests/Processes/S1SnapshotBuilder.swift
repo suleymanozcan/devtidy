@@ -26,8 +26,19 @@ enum S1SnapshotBuilder {
             cpuPercent: cpu)
     }
 
-    static func port(_ port: UInt16, owner: Int32, scope: BindScope = .loopback, established: Int = 0) -> ListeningPort {
-        ListeningPort(port: port, ownerPID: owner, scope: scope, establishedConnections: established)
+    /// `binds` defaults to the one socket `scope` implies: `.loopback` 127.0.0.1, `.allInterfaces` 0.0.0.0, `.other` 192.168.1.20.
+    static func port(_ port: UInt16, owner: Int32, scope: BindScope = .loopback, binds: Set<BindAddress>? = nil,
+                     established: Int = 0) -> ListeningPort {
+        ListeningPort(port: port, ownerPID: owner, scope: scope, binds: binds ?? [defaultBind(for: scope)],
+                      establishedConnections: established)
+    }
+
+    static func defaultBind(for scope: BindScope) -> BindAddress {
+        switch scope {
+        case .loopback: .ipv4(127, 0, 0, 1)
+        case .allInterfaces: .ipv4Wildcard
+        case .other: .ipv4(192, 168, 1, 20)
+        }
     }
 
     static func snapshot(selfPID: Int32 = S1Fixtures.selfPID, nodes: [ProcessNode], listeners: [ListeningPort] = []) -> ProcessSnapshot {

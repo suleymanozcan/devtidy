@@ -20,9 +20,10 @@ struct DevTidyStorePageTitleTests {
     /// A server that started a minute ago. The default test server has run for an hour without CPU, which the idle tracker flags
     /// as "probably idle", and a flagged server is not asked (see `aServerFlaggedIdleIsNotAskedUntilItIsActiveAgain`).
     private func fresh(_ pid: Int32 = 10, port: UInt16 = 5182, cpu: Double? = 0, connections: Int = 0, scope: BindScope = .loopback,
-                       arguments: [String] = [], started: Date = S4.t0.addingTimeInterval(-60)) -> DevServer {
+                       binds: Set<BindAddress>? = nil, arguments: [String] = [],
+                       started: Date = S4.t0.addingTimeInterval(-60)) -> DevServer {
         S4.server(pid: pid, project: project, port: port, cpu: cpu, connections: connections, started: started,
-                  arguments: arguments, scope: scope)
+                  arguments: arguments, scope: scope, binds: binds)
     }
 
     /// Waits until every request the store started has been applied or dropped (the end state is decided by then), plus a few
@@ -268,6 +269,63 @@ struct DevTidyStorePageTitleTests {
         await rig.store.processTick()
         await settle(rig)
         #expect(rig.pageTitles.calls == 0)
+    }
+
+    // MARK: A port that another process shares
+
+    /// `com.docker.backend`'s socket for a published container port: the classifier lists it nowhere, the scan's listener table
+    /// still has it.
+    private func docker(_ port: UInt16, on bind: BindAddress) -> [Int32: [ListeningPort]] {
+        [19_200: [S4.port(port, owner: 19_200, binds: [bind])]]
+    }
+
+    @Test func aServerOnIPv6LoopbackIsAskedOnIPv6WhileDockerHoldsTheSamePortOnIPv4() async {
+        let rig = makeRig()
+        let redalert = fresh(39_467, port: 5173, binds: [.ipv6Loopback])
+        rig.classifier.state.with { $0.servers = [redalert] }
+        rig.scanner.state.with { $0.listeners = docker(5173, on: .ipv4(127, 0, 0, 1)) }
+        rig.store.isPopoverVisible = true
+        await rig.store.processTick()
+        #expect(await s4Eventually { rig.store.pageTitle(for: redalert) != nil })
+        #expect(rig.pageTitles.state.snapshot.targets.map(\.addresses) == [[.ipv6]])
+    }
+
+    @Test func aServerWhoseEveryAddressAnotherProcessTakesIsNotAskedAndSaysWhy() async {
+        let rig = makeRig()
+        let server = fresh(39_467, port: 5173, binds: [.ipv4Wildcard])
+        rig.classifier.state.with { $0.servers = [server] }
+        rig.scanner.state.with { $0.listeners = docker(5173, on: .ipv4(127, 0, 0, 1)) }
+        rig.store.isPopoverVisible = true
+        for _ in 0..<2 { await rig.store.processTick() }
+        await settle(rig)
+        #expect(rig.pageTitles.calls == 0)
+        #expect(rig.store.pageTitleStatus(for: server) == .portShared)
+        #expect(rig.store.pageTitle(for: server) == nil)
+
+        // The container goes away: the server's own address is free again and is asked.
+        rig.scanner.state.with { $0.listeners = [:] }
+        await rig.store.processTick()
+        #expect(await s4Eventually { rig.store.pageTitle(for: server) != nil })
+        #expect(rig.pageTitles.state.snapshot.targets.map(\.addresses) == [[.ipv4(127, 0, 0, 1)]])
+        #expect(rig.store.pageTitleStatus(for: server) == .title("Page 5173"))
+    }
+
+    @Test func aTitleReadThroughOtherAddressesIsNotReusedWhenTheAddressesChange() async {
+        let rig = makeRig()
+        let server = fresh(39_467, port: 5173, binds: [.ipv4(127, 0, 0, 1), .ipv6Loopback])
+        rig.classifier.state.with { $0.servers = [server] }
+        rig.store.isPopoverVisible = true
+        await rig.store.processTick()
+        #expect(await s4Eventually { rig.store.pageTitle(for: server) != nil })
+        #expect(rig.pageTitles.state.snapshot.targets.map(\.addresses) == [[.ipv4(127, 0, 0, 1), .ipv6]])
+
+        // A container now publishes the port on IPv4: what was read before may have been the container's page.
+        rig.scanner.state.with { $0.listeners = docker(5173, on: .ipv4(127, 0, 0, 1)) }
+        rig.pageTitles.state.with { $0.fallback = { _ in .title("Own page") } }
+        await rig.store.processTick()
+        #expect(await s4Eventually { rig.store.pageTitle(for: server) == "Own page" })
+        #expect(rig.pageTitles.state.snapshot.targets.map(\.addresses) == [[.ipv4(127, 0, 0, 1), .ipv6], [.ipv6]])
+        #expect(rig.store.pageTitles.count == 1)                                          // the old target's title is gone
     }
 
     // MARK: Failure and the single retry

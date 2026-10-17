@@ -61,7 +61,7 @@ struct LiveSmokeTests {
         #expect(identity.pathInRepo == nil)
         #expect(identity.manifest?.name == "devtidy-smoke")
         #expect(identity.head != nil)
-        let titleTarget = try #require(PageTitleTarget.make(for: server))
+        let titleTarget = try #require(PageTitleTarget.make(for: server, in: scan))
         #expect(titleTarget.port == port)
         #expect(await services.pageTitles.title(for: titleTarget) == .title("DevTidy Smoke"))
 

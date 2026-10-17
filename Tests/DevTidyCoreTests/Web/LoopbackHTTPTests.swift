@@ -6,27 +6,37 @@ import Testing
 struct LoopbackRedirectTests {
     private let port: UInt16 = 5182
 
-    private func resolve(_ location: String, from host: LoopbackHost = .any, path: String = "/") -> LoopbackRedirect.Target? {
-        LoopbackRedirect.resolve(location: location, currentHost: host, currentPath: path, port: port)
+    private func resolve(_ location: String, answeredBy address: LoopbackAddress = .ipv4(127, 0, 0, 1), from host: LoopbackHost? = nil,
+                         path: String = "/") -> LoopbackRedirect.Target? {
+        LoopbackRedirect.resolve(location: location, currentHost: host ?? LoopbackHost(address), currentPath: path, port: port,
+                                 answeredBy: address)
     }
 
-    @Test func loopbackOnTheSamePortIsFollowed() {
+    @Test func loopbackOnTheSamePortAndAddressIsFollowed() {
         #expect(resolve("http://127.0.0.1:5182/en") == .init(host: .ipv4(127, 0, 0, 1), path: "/en"))
-        #expect(resolve("http://127.0.0.5:5182/") == .init(host: .ipv4(127, 0, 0, 5), path: "/"))
+        #expect(resolve("http://127.0.0.5:5182/", answeredBy: .ipv4(127, 0, 0, 5)) == .init(host: .ipv4(127, 0, 0, 5), path: "/"))
         #expect(resolve("http://localhost:5182/app/") == .init(host: .localhost, path: "/app/"))
         #expect(resolve("HTTP://LOCALHOST:5182/x") == .init(host: .localhost, path: "/x"))
-        #expect(resolve("http://[::1]:5182/v6") == .init(host: .ipv6, path: "/v6"))
+        #expect(resolve("http://[::1]:5182/v6", answeredBy: .ipv6) == .init(host: .ipv6, path: "/v6"))
         #expect(resolve("//localhost:5182/net-path") == .init(host: .localhost, path: "/net-path"))
         #expect(resolve("http://localhost:5182") == .init(host: .localhost, path: "/"))
         #expect(resolve("http://localhost:5182?x=1") == .init(host: .localhost, path: "/?x=1"))
     }
 
+    @Test func aRedirectNeverMovesToAnotherLoopbackAddress() {
+        // Another address is another socket, maybe another process's (Docker on 127.0.0.1:5173 beside a server on [::1]:5173).
+        #expect(resolve("http://[::1]:5182/", answeredBy: .ipv4(127, 0, 0, 1)) == nil)
+        #expect(resolve("http://127.0.0.1:5182/", answeredBy: .ipv6) == nil)
+        #expect(resolve("http://127.0.0.5:5182/", answeredBy: .ipv4(127, 0, 0, 1)) == nil)
+        #expect(resolve("//127.0.0.1:5182/x", answeredBy: .ipv6) == nil)
+    }
+
     @Test func relativeLocationsStayOnTheCurrentHost() {
-        #expect(resolve("/login", from: .ipv6) == .init(host: .ipv6, path: "/login"))
-        #expect(resolve("next", from: .any, path: "/a/b?q=1") == .init(host: .any, path: "/a/next"))
-        #expect(resolve("../up", from: .any, path: "/a/b/c") == .init(host: .any, path: "/a/up"))
-        #expect(resolve("?page=2", from: .any, path: "/list?page=1") == .init(host: .any, path: "/list?page=2"))
-        #expect(resolve("/a/./b/../c#frag") == .init(host: .any, path: "/a/c"))
+        #expect(resolve("/login", answeredBy: .ipv6) == .init(host: .ipv6, path: "/login"))
+        #expect(resolve("next", path: "/a/b?q=1") == .init(host: .ipv4(127, 0, 0, 1), path: "/a/next"))
+        #expect(resolve("../up", path: "/a/b/c") == .init(host: .ipv4(127, 0, 0, 1), path: "/a/up"))
+        #expect(resolve("?page=2", from: .localhost, path: "/list?page=1") == .init(host: .localhost, path: "/list?page=2"))
+        #expect(resolve("/a/./b/../c#frag") == .init(host: .ipv4(127, 0, 0, 1), path: "/a/c"))
     }
 
     @Test(arguments: [
@@ -48,22 +58,19 @@ struct LoopbackRedirectTests {
         #expect(resolve("/a\u{7}b") == nil)
     }
 
-    @Test func aHostHeaderNamesTheAddressItWasSentTo() {
-        #expect(LoopbackHost.any.hostHeader(for: .ipv4(127, 0, 0, 1), port: 80) == "127.0.0.1:80")
-        #expect(LoopbackHost.any.hostHeader(for: .ipv6, port: 80) == "[::1]:80")
-        #expect(LoopbackHost.localhost.hostHeader(for: .ipv6, port: 80) == "localhost:80")
-        #expect(LoopbackHost.ipv6.addresses == [.ipv6])
-        #expect(LoopbackHost.ipv4(127, 1, 2, 3).addresses == [.ipv4(127, 1, 2, 3)])
+    @Test func aHostHeaderNamesTheHostOfTheRequest() {
+        #expect(LoopbackHost(.ipv4(127, 0, 0, 1)).hostHeader(port: 80) == "127.0.0.1:80")
+        #expect(LoopbackHost(.ipv4(127, 1, 2, 3)).hostHeader(port: 80) == "127.1.2.3:80")
+        #expect(LoopbackHost(.ipv6).hostHeader(port: 80) == "[::1]:80")
+        #expect(LoopbackHost.localhost.hostHeader(port: 80) == "localhost:80")
     }
 
-    @Test func onlyLoopbackAddressesAreEverCandidates() {
-        for host in [LoopbackHost.any, .localhost, .ipv6, .ipv4(127, 0, 0, 1), .ipv4(127, 9, 9, 9)] {
-            for address in host.addresses {
-                switch address {
-                case .ipv6: break
-                case .ipv4(let a, _, _, _): #expect(a == 127)
-                }
-            }
+    @Test func aHostIsServedByTheAddressItNamesAndLocalhostByAny() {
+        let addresses: [LoopbackAddress] = [.ipv4(127, 0, 0, 1), .ipv4(127, 0, 0, 2), .ipv6]
+        for address in addresses {
+            #expect(LoopbackHost.localhost.isServed(by: address))
+            #expect(LoopbackHost(address).isServed(by: address))
+            for other in addresses where other != address { #expect(!LoopbackHost(address).isServed(by: other)) }
         }
     }
 }

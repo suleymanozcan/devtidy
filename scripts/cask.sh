@@ -38,6 +38,7 @@ cask "devtidy" do
     strategy :github_latest
   end
 
+  auto_updates true
   depends_on macos: :sonoma
 
   app "DevTidy.app"
@@ -45,6 +46,7 @@ cask "devtidy" do
   uninstall quit: "dev.minata.DevTidy"
 
   zap trash: [
+    "~/Library/Caches/dev.minata.DevTidy",
     "~/Library/Logs/DevTidy",
     "~/Library/Preferences/dev.minata.DevTidy.plist",
   ]

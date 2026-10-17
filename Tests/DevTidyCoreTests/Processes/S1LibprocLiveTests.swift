@@ -74,9 +74,78 @@ import Testing
             let mine = try #require(ports.first { $0.port == port })
             #expect(mine.scope == .loopback)
             #expect(mine.establishedConnections == 1)
+            #expect(mine.binds == [.ipv4(127, 0, 0, 1)])
             #expect(mine.ownerPID == getpid())
             #expect(ports.filter { $0.port == port }.count == 1)        // deduplicated by (pid, port)
         }
+    }
+
+    /// A listening loopback socket of the given family, bound to `port` (0 = kernel's choice); nil when that port is taken. The
+    /// caller closes `fd`.
+    private func loopbackListener(ipv6: Bool, port requested: UInt16 = 0) throws -> (fd: Int32, port: UInt16)? {
+        let fd = socket(ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+        let bound: Int32
+        let actual: UInt16
+        if ipv6 {
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            address.sin6_port = requested.bigEndian
+            withUnsafeMutableBytes(of: &address.sin6_addr) { $0[15] = 1 }          // ::1
+            bound = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) }
+            }
+            var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+            _ = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+            }
+            actual = UInt16(bigEndian: address.sin6_port)
+        } else {
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = requested.bigEndian
+            address.sin_addr.s_addr = UInt32(0x7F00_0001).bigEndian
+            bound = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+            _ = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+            }
+            actual = UInt16(bigEndian: address.sin_port)
+        }
+        guard bound == 0, listen(fd, 4) == 0 else {
+            close(fd)
+            return nil
+        }
+        return (fd, actual)
+    }
+
+    @Test func aSocketOnTheIPv6LoopbackReportsThatAddress() async throws {
+        let (fd, port) = try #require(try loopbackListener(ipv6: true))
+        defer { close(fd) }
+        let snapshot = await LiveProcessScanner().snapshot(.standard)
+        let mine = try #require(snapshot.listeners[getpid()]?.first { $0.port == port })
+        #expect(mine.binds == [.ipv6Loopback])
+        #expect(mine.scope == .loopback)
+    }
+
+    @Test func twoSocketsOnOnePortKeepBothAddresses() async throws {
+        var pair: (v4: (fd: Int32, port: UInt16), v6: (fd: Int32, port: UInt16))?
+        for _ in 0..<20 {                                   // the IPv6 side may find the kernel's IPv4 pick taken
+            let v4 = try #require(try loopbackListener(ipv6: false))
+            guard let v6 = try loopbackListener(ipv6: true, port: v4.port) else { close(v4.fd); continue }
+            pair = (v4, v6)
+            break
+        }
+        let sockets = try #require(pair)
+        defer { close(sockets.v4.fd); close(sockets.v6.fd) }
+        let snapshot = await LiveProcessScanner().snapshot(.standard)
+        let mine = try #require(snapshot.listeners[getpid()]?.filter { $0.port == sockets.v4.port })
+        #expect(mine.count == 1)                            // still one entry per (pid, port)
+        #expect(mine.first?.binds == [.ipv4(127, 0, 0, 1), .ipv6Loopback])
     }
 
     @Test func listenerOwnersGetExecutableArgumentsAndWorkingDirectory() async throws {

@@ -285,6 +285,7 @@ private struct ServerDetailsView: View {
         case .noTitle: "yok"
         case .failed: "okunamadı (sunucu yanıt vermedi; HTTPS kullanıyor olabilir)"
         case .skippedIdle: "okunmadı (sunucu boşta; etkinleşince okunur)"
+        case .portShared: "okunmadı (aynı portu başka bir süreç de dinliyor)"
         }
     }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DevTidy sürüm yayını: test -> evrensel + imzalı .app -> notarization -> DMG -> notarization -> etiket -> GitHub release -> Homebrew tap.
+# DevTidy sürüm yayını: test -> evrensel + imzalı .app -> notarization -> DMG -> notarization -> Sparkle appcast -> etiket -> GitHub release (DMG + appcast.xml) -> Homebrew tap.
 #
 # Kullanım: scripts/release.sh <sürüm>        (örn. scripts/release.sh 0.1.0)
 #
@@ -34,6 +34,10 @@ SIGN_TEAM="${SIGN_TEAM:-Minata Entertainment, LLC}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 APP="build/DevTidy.app"
 DMG="dist/DevTidy-$VERSION.dmg"
+APPCAST="dist/appcast.xml"
+# Sparkle'ın SwiftPM artifact'ındaki araçlar (swift package resolve ile iner; .build/ git'e girmez).
+SPARKLE_BIN=".build/artifacts/sparkle/Sparkle/bin"
+FEED_URL="https://github.com/$SRC_REPO/releases/latest/download/appcast.xml"
 
 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 if [[ -d "$DEVELOPER_DIR" ]]; then
@@ -56,7 +60,7 @@ problem() { # problem <mesaj> [çözüm satırları...]
 
 echo "==> Ön kontrol (yan etkisiz)"
 
-for tool in git gh swift ditto lipo hdiutil codesign shasum security spctl plutil ruby; do
+for tool in git gh swift ditto lipo hdiutil codesign shasum security spctl plutil ruby xmllint; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         if [[ "$tool" == "gh" ]]; then
             problem "'gh' (GitHub CLI) bulunamadı." "Çözüm: brew install gh && gh auth login"
@@ -149,6 +153,29 @@ if xcrun --find notarytool >/dev/null 2>&1; then
     fi
 fi
 
+# Sparkle: uygulamanın güncelleme akışı iki şeye bağlı; ikisi de burada yan etkisiz doğrulanır.
+#  1) Info.plist'teki SUFeedURL, release'e yüklenecek appcast.xml'in 'latest' adresi olmalı.
+#  2) Anahtarlıktaki EdDSA özel anahtarının genel yarısı Info.plist'teki SUPublicEDKey olmalı; yoksa ya da farklıysa
+#     yayınlanan DMG'yi mevcut kurulumlar reddeder (güncelleme sessizce kırılır).
+plist_feed="$(plutil -extract SUFeedURL raw -o - Resources/Info.plist 2>/dev/null || true)"
+if [[ "$plist_feed" != "$FEED_URL" ]]; then
+    problem "Resources/Info.plist SUFeedURL beklenen adres değil: '${plist_feed:-<yok>}'" \
+        "Beklenen: $FEED_URL"
+fi
+plist_pub="$(plutil -extract SUPublicEDKey raw -o - Resources/Info.plist 2>/dev/null || true)"
+if [[ -z "$plist_pub" ]]; then
+    problem "Resources/Info.plist içinde SUPublicEDKey yok." "Çözüm: $SPARKLE_BIN/generate_keys   (genel anahtarı SUPublicEDKey olarak ekleyin)"
+elif [[ ! -x "$SPARKLE_BIN/generate_keys" || ! -x "$SPARKLE_BIN/sign_update" ]]; then
+    problem "Sparkle araçları bulunamadı ($SPARKLE_BIN/generate_keys, sign_update)." "Çözüm: swift package resolve"
+elif ! keychain_pub="$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null)"; then
+    problem "Anahtarlıkta Sparkle EdDSA özel anahtarı yok (generate_keys -p başarısız)." \
+        "Çözüm: anahtarı yedekten içe aktarın: $SPARKLE_BIN/generate_keys -f <yedek-dosyası>" \
+        "(yeni anahtar üretmek mevcut kurulumların güncellemesini kırar; README 'Güncellemeler › Bakımcı' bölümüne bakın)"
+elif [[ "$keychain_pub" != "$plist_pub" ]]; then
+    problem "Anahtarlıktaki Sparkle genel anahtarı ($keychain_pub) Info.plist SUPublicEDKey ($plist_pub) ile aynı değil." \
+        "Çözüm: doğru özel anahtarı içe aktarın (generate_keys -f <yedek>); Info.plist'i değiştirmek mevcut kurulumların güncellemesini kırar."
+fi
+
 if [[ "$PROBLEMS" -gt 0 ]]; then
     echo >&2
     echo "release.sh: ön kontrol BAŞARISIZ ($PROBLEMS sorun). Hiçbir şey yapılmadı: etiket, release, tap ya da depo oluşturulmadı." >&2
@@ -175,7 +202,7 @@ on_exit() {
         else
             echo "release.sh: yayın aşamasında BAŞARISIZ. Durum: etiket push edildi=$TAG_PUSHED, GitHub release=$RELEASE_CREATED." >&2
             if [[ "$TAG_PUSHED" == 1 && "$RELEASE_CREATED" != 1 ]]; then
-                echo "  Release'i elle tamamlayın: gh release create $TAG $DMG --repo $SRC_REPO --verify-tag --title 'DevTidy $VERSION' --generate-notes" >&2
+                echo "  Release'i elle tamamlayın: gh release create $TAG $DMG $APPCAST --repo $SRC_REPO --verify-tag --title 'DevTidy $VERSION' --generate-notes" >&2
             fi
             if [[ "$RELEASE_CREATED" == 1 && -n "$SHA256" ]]; then
                 echo "  Tap'i elle güncelleyin: scripts/cask.sh $VERSION $SHA256 > Casks/devtidy.rb   (suleymanozcan/homebrew-tap içinde commit + push)" >&2
@@ -209,11 +236,17 @@ notarize() {
     fi
 }
 
-echo "==> [1/8] swift test"
+echo "==> [1/9] swift test"
 swift test
 
-echo "==> [2/8] evrensel imzalı $APP"
-SIGN="$SIGN_IDENTITY" VERSION="$VERSION" scripts/bundle.sh
+echo "==> [2/9] evrensel imzalı $APP"
+# Sparkle CFBundleVersion'ları sayısal karşılaştırır; zaman damgası her sürümde büyür. Aynı değer appcast'teki sparkle:version olur.
+BUILD="$(date +%Y%m%d%H%M)"
+SIGN="$SIGN_IDENTITY" VERSION="$VERSION" BUILD="$BUILD" scripts/bundle.sh
+if [[ "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" != "$BUILD" ]]; then
+    echo "release.sh: HATA: $APP CFBundleVersion'ı BUILD ($BUILD) ile aynı değil; appcast uyuşmazdı." >&2
+    exit 1
+fi
 # Captured first: `grep -q` exits at the first match, codesign then dies of SIGPIPE and `pipefail` would fail the check.
 SIGNATURE="$(codesign -dv --verbose=4 "$APP" 2>&1)"
 if ! grep -qF "Authority=Developer ID Application: $SIGN_TEAM (" <<<"$SIGNATURE"; then
@@ -221,17 +254,17 @@ if ! grep -qF "Authority=Developer ID Application: $SIGN_TEAM (" <<<"$SIGNATURE"
     exit 1
 fi
 
-echo "==> [3/8] .app notarization + staple"
+echo "==> [3/9] .app notarization + staple"
 ditto -c -k --keepParent "$APP" "$WORK/DevTidy-$VERSION-app.zip"
 notarize "$WORK/DevTidy-$VERSION-app.zip"
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 spctl -a -vv "$APP"
 
-echo "==> [4/8] DMG"
+echo "==> [4/9] DMG"
 SIGN="$SIGN_IDENTITY" scripts/dmg.sh "$APP" "$VERSION"
 
-echo "==> [5/8] DMG notarization + staple"
+echo "==> [5/9] DMG notarization + staple"
 notarize "$DMG"
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
@@ -241,12 +274,27 @@ spctl -a -vv -t open --context context:primary-signature "$DMG"
 SHA256="$(shasum -a 256 "$DMG" | awk '{print $1}')"
 echo "    sha256: $SHA256"
 
+echo "==> [6/9] Sparkle appcast"
+# DMG notarize edilip staple'landıktan SONRA imzalanır (staple dosyayı değiştirir). Özel anahtar anahtarlıktan okunur, diske yazılmaz.
+# sign_update çıktısı: sparkle:edSignature="..." length="..."
+SIGN_UPDATE_OUT="$("$SPARKLE_BIN/sign_update" "$DMG")"
+ED_SIGNATURE="$(sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p' <<<"$SIGN_UPDATE_OUT")"
+DMG_LENGTH="$(sed -nE 's/.*length="([0-9]+)".*/\1/p' <<<"$SIGN_UPDATE_OUT")"
+if [[ -z "$ED_SIGNATURE" || -z "$DMG_LENGTH" || "$DMG_LENGTH" != "$(stat -f %z "$DMG")" ]]; then
+    echo "release.sh: HATA: sign_update çıktısı ayrıştırılamadı ya da length DMG boyutuyla uyuşmuyor: $SIGN_UPDATE_OUT" >&2
+    exit 1
+fi
+"$SPARKLE_BIN/sign_update" --verify "$DMG" "$ED_SIGNATURE"
+"$ROOT/scripts/appcast.sh" "$VERSION" "$BUILD" "$DMG_LENGTH" "$ED_SIGNATURE" > "$APPCAST"
+xmllint --noout "$APPCAST"
+echo "    $APPCAST: sparkle:version=$BUILD, sparkle:shortVersionString=$VERSION, length=$DMG_LENGTH"
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Yayın aşaması: artık dışarıya yazılır.
 # ---------------------------------------------------------------------------------------------------------------------
 PHASE=yayin
 
-echo "==> [6/8] etiket $TAG"
+echo "==> [7/9] etiket $TAG"
 git tag -a "$TAG" -m "DevTidy $VERSION"
 if ! git push origin "refs/tags/$TAG"; then
     git tag -d "$TAG" >/dev/null
@@ -255,11 +303,11 @@ if ! git push origin "refs/tags/$TAG"; then
 fi
 TAG_PUSHED=1
 
-echo "==> [7/8] GitHub release"
-gh release create "$TAG" "$DMG" --repo "$SRC_REPO" --verify-tag --title "DevTidy $VERSION" --generate-notes
+echo "==> [8/9] GitHub release"
+gh release create "$TAG" "$DMG" "$APPCAST" --repo "$SRC_REPO" --verify-tag --title "DevTidy $VERSION" --generate-notes
 RELEASE_CREATED=1
 
-echo "==> [8/8] Homebrew tap ($TAP_REPO)"
+echo "==> [9/9] Homebrew tap ($TAP_REPO)"
 TAP_DIR="$WORK/tap"
 if tap_probe="$(gh api "repos/$TAP_REPO" --jq .full_name 2>&1)"; then
     gh repo clone "$TAP_REPO" "$TAP_DIR" -- --quiet

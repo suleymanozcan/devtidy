@@ -128,24 +128,39 @@ enum S4 {
                         workspaceName: workspace, head: head, manifest: manifest)
     }
 
-    static func port(_ port: UInt16, owner: Int32, scope: BindScope = .loopback, established: Int = 0) -> ListeningPort {
-        ListeningPort(port: port, ownerPID: owner, scope: scope, establishedConnections: established)
+    /// `binds` defaults to the one socket `scope` implies (`.loopback` 127.0.0.1, `.allInterfaces` 0.0.0.0, `.other` 192.168.1.20);
+    /// without `scope` it is the widest scope among `binds`.
+    static func port(_ port: UInt16, owner: Int32, scope: BindScope? = nil, binds: Set<BindAddress>? = nil,
+                     established: Int = 0) -> ListeningPort {
+        let resolved = binds ?? [S1SnapshotBuilder.defaultBind(for: scope ?? .loopback)]
+        func width(_ scope: BindScope) -> Int { scope == .allInterfaces ? 2 : scope == .other ? 1 : 0 }
+        let widest = resolved.map(\.scope).max { width($0) < width($1) } ?? .other
+        return ListeningPort(port: port, ownerPID: owner, scope: scope ?? widest, binds: resolved, establishedConnections: established)
     }
 
     static func server(pid: Int32, project: Project?, port: UInt16 = 3000, cpu: Double? = 0, connections: Int = 0,
                        mem: UInt64 = 100 * mb, started: Date = t0.addingTimeInterval(-3_600),
                        extraMembers: [ProcessNode] = [], extraPorts: [UInt16] = [], arguments: [String] = [],
-                       scope: BindScope = .loopback) -> DevServer {
+                       scope: BindScope = .loopback, binds: Set<BindAddress>? = nil) -> DevServer {
         let root = node(pid, name: "node", args: arguments, cwd: project?.root, cpu: cpu, mem: mem, started: started)
         return DevServer(root: root, members: [root] + extraMembers,
                          ports: ([port] + extraPorts).map {
-                             S4.port($0, owner: pid, scope: $0 == port ? scope : .loopback, established: $0 == port ? connections : 0)
+                             $0 == port ? S4.port($0, owner: pid, scope: binds == nil ? scope : nil, binds: binds, established: connections)
+                                        : S4.port($0, owner: pid, scope: .loopback)
                          }, mainPort: port,
                          project: project, kind: .next, confidence: project == nil ? .low : .high,
                          command: "next dev -p \(port)", cpuPercent: cpu, memoryBytes: mem,
                          establishedConnections: connections,
                          hints: ServerHints(orphaned: false, noControllingTTY: true, lanExposed: false, noConnections: connections == 0),
                          groupKillEligible: true)
+    }
+
+    /// A scan of `servers` whose listener table holds the servers' own sockets plus `rivals` (sockets of other processes, e.g.
+    /// Docker's port proxy, which the classifier lists nowhere).
+    static func scan(_ servers: [DevServer], rivals: [ListeningPort] = []) -> ServerScan {
+        var listeners: [Int32: [ListeningPort]] = [:]
+        for port in servers.flatMap(\.ports) + rivals { listeners[port.ownerPID, default: []].append(port) }
+        return ServerScan(takenAt: t0, servers: servers, others: [], listeners: listeners)
     }
 
     static func container(_ name: String, state: ContainerState = .running, cpu: Double? = 0, mem: UInt64? = 10 * mb,
@@ -238,7 +253,7 @@ final class S4Classifier: ServerClassifying, @unchecked Sendable {
         let (s, gate): (State, S4Gate?) = state.with { st in (st, st.gates.isEmpty ? nil : st.gates.removeFirst()) }
         log.add("classify")
         await gate?.wait()
-        return ServerScan(takenAt: snapshot.takenAt, servers: s.servers, others: s.others)
+        return ServerScan(takenAt: snapshot.takenAt, servers: s.servers, others: s.others, listeners: snapshot.listeners)
     }
 }
 

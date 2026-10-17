@@ -9,7 +9,9 @@ enum Libproc {
 
     struct ListeningSocket: Sendable, Equatable {
         let port: UInt16
-        let scope: BindScope
+        /// nil when libproc's address could not be decoded (no family flag, short buffer).
+        let address: BindAddress?
+        var scope: BindScope { address?.scope ?? .other }
     }
 
     struct SocketScan: Sendable, Equatable {
@@ -126,7 +128,7 @@ enum Libproc {
 
     // MARK: Sockets
 
-    /// Listening TCP sockets (with bind scope) and per-local-port ESTABLISHED counts of one process.
+    /// Listening TCP sockets (with their bind address) and per-local-port ESTABLISHED counts of one process.
     static func sockets(pid: Int32) -> SocketScan {
         var result = SocketScan()
         let listBytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
@@ -146,8 +148,8 @@ enum Libproc {
             let port = UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_lport))
             if tcp.tcpsi_state == Int32(TSI_S_LISTEN) {
                 let vflag = tcp.tcpsi_ini.insi_vflag
-                let scope = withUnsafeBytes(of: tcp.tcpsi_ini.insi_laddr) { bindScope(vflag: vflag, address: $0) }
-                result.listening.append(ListeningSocket(port: port, scope: scope))
+                let address = withUnsafeBytes(of: tcp.tcpsi_ini.insi_laddr) { bindAddress(vflag: vflag, address: $0) }
+                result.listening.append(ListeningSocket(port: port, address: address))
             } else if tcp.tcpsi_state == Int32(TSI_S_ESTABLISHED) {
                 result.established[port, default: 0] += 1
             }
@@ -157,25 +159,17 @@ enum Libproc {
 
     /// `insi_vflag` bits from `<sys/proc_info.h>`: INI_IPV4 = 0x1, INI_IPV6 = 0x2 (dual-stack sockets carry both).
     /// `address` is the 16-byte `insi_laddr` union: an `in6_addr`, or an `in4in6_addr` whose IPv4 address is bytes 12…15.
-    static func bindScope(vflag: UInt8, address: UnsafeRawBufferPointer) -> BindScope {
-        guard address.count >= 16 else { return .other }
-        func ipv4Scope(_ a: UInt8, _ b: UInt8, _ c: UInt8, _ d: UInt8) -> BindScope {
-            if a == 127 { return .loopback }
-            if a == 0 && b == 0 && c == 0 && d == 0 { return .allInterfaces }
-            return .other
-        }
+    /// An IPv6 socket bound to a v4-mapped address (`::ffff:a.b.c.d`) is an IPv4 bind: only IPv4 connections reach it.
+    static func bindAddress(vflag: UInt8, address: UnsafeRawBufferPointer) -> BindAddress? {
+        guard address.count >= 16 else { return nil }
         if vflag & 0x2 != 0 {
-            var leadingZeros = 0
-            while leadingZeros < 16, address[leadingZeros] == 0 { leadingZeros += 1 }
-            if leadingZeros == 16 { return .allInterfaces }
-            if leadingZeros == 15, address[15] == 1 { return .loopback }
-            if leadingZeros == 10, address[10] == 0xFF, address[11] == 0xFF {
-                return ipv4Scope(address[12], address[13], address[14], address[15])   // ::ffff:a.b.c.d
-            }
-            return .other
+            func word(_ offset: Int) -> UInt64 { (offset..<offset + 8).reduce(0) { $0 << 8 | UInt64(address[$1]) } }
+            let high = word(0), low = word(8)
+            if high == 0, low >> 32 == 0x0000_FFFF { return .ipv4(address[12], address[13], address[14], address[15]) }
+            return .ipv6(high: high, low: low, dualStack: high == 0 && low == 0 && vflag & 0x1 != 0)
         }
-        if vflag & 0x1 != 0 { return ipv4Scope(address[12], address[13], address[14], address[15]) }
-        return .other
+        if vflag & 0x1 != 0 { return .ipv4(address[12], address[13], address[14], address[15]) }
+        return nil
     }
 
     // MARK: argv (KERN_PROCARGS2)
