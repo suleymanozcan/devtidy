@@ -4,7 +4,8 @@
 # Kullanım: scripts/release.sh <sürüm>        (örn. scripts/release.sh 0.1.0)
 #
 # Ortam değişkenleri:
-#   SIGN_IDENTITY   Developer ID Application kimliği (SHA-1 ya da tam ad). Verilmezse anahtarlıktan otomatik bulunur.
+#   SIGN_TEAM       İmzalayan Developer ID sahibinin adı (varsayılan "Minata Entertainment, LLC"). Kimlik yalnızca bu adla seçilir.
+#   SIGN_IDENTITY   Aynı ada ait birden fazla sertifika varsa seçilecek olanın SHA-1'i ya da tam adı.
 #   NOTARY_PROFILE  notarytool anahtarlık profili (varsayılan devtidy-notary).
 #
 # Sıra bilinçli seçildi: etiket, release ve tap en sona kalır. Etiket push edilene kadar her hata dışarıda HİÇBİR şey bırakmaz
@@ -29,6 +30,7 @@ SRC_REPO="suleymanozcan/devtidy"
 TAP_REPO="suleymanozcan/homebrew-tap"
 TAG="v$VERSION"
 NOTARY_PROFILE="${NOTARY_PROFILE:-devtidy-notary}"
+SIGN_TEAM="${SIGN_TEAM:-Minata Entertainment, LLC}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 APP="build/DevTidy.app"
 DMG="dist/DevTidy-$VERSION.dmg"
@@ -121,19 +123,22 @@ if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
 fi
 
 IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-DEVID_LINES="$(grep 'Developer ID Application' <<<"$IDENTITIES" || true)"
+# Yalnızca SIGN_TEAM adına düzenlenmiş Developer ID Application kimlikleri aday olur; başka takımla imzalama sessizce olmaz.
+DEVID_LINES="$(grep -F "\"Developer ID Application: $SIGN_TEAM (" <<<"$IDENTITIES" || true)"
 if [[ -n "$SIGN_IDENTITY" ]]; then
-    if ! grep -qF -- "$SIGN_IDENTITY" <<<"$IDENTITIES"; then
-        problem "SIGN_IDENTITY='$SIGN_IDENTITY' anahtarlıkta geçerli bir kod imzalama kimliği olarak bulunamadı." \
-            "Kontrol: security find-identity -v -p codesigning"
-    fi
-elif [[ -z "$DEVID_LINES" ]]; then
-    problem "'Developer ID Application' sertifikası bulunamadı (security find-identity -v -p codesigning boş)." \
-        "Çözüm: Xcode › Settings › Accounts › Manage Certificates › + › Developer ID Application (yalnızca Account Holder oluşturabilir)." \
-        "Başka bir kimlik kullanmak için: SIGN_IDENTITY='<SHA-1 ya da ad>' scripts/release.sh $VERSION"
+    DEVID_LINES="$(grep -F -- "$SIGN_IDENTITY" <<<"$DEVID_LINES" || true)"
+fi
+DEVID_COUNT="$(grep -c . <<<"$DEVID_LINES" || true)"
+if [[ "$DEVID_COUNT" -eq 0 ]]; then
+    problem "'Developer ID Application: $SIGN_TEAM' sertifikası bulunamadı${SIGN_IDENTITY:+ (SIGN_IDENTITY='$SIGN_IDENTITY' ile eşleşen)}." \
+        "Çözüm: Xcode › Settings › Accounts › $SIGN_TEAM takımı › Manage Certificates › + › Developer ID Application (yalnızca Account Holder oluşturabilir)." \
+        "Kontrol: security find-identity -v -p codesigning"
+elif [[ "$DEVID_COUNT" -gt 1 ]]; then
+    problem "'$SIGN_TEAM' adına birden fazla Developer ID Application sertifikası var; hangisinin kullanılacağı belirsiz." \
+        "Çözüm: SIGN_IDENTITY='<SHA-1>' scripts/release.sh $VERSION   (SHA-1 listesi: security find-identity -v -p codesigning)"
 else
-    SIGN_IDENTITY="$(head -n 1 <<<"$DEVID_LINES" | awk '{print $2}')"
-    IDENTITY_NAME="$(head -n 1 <<<"$DEVID_LINES" | sed -E 's/^[^"]*"([^"]*)".*$/\1/')"
+    SIGN_IDENTITY="$(awk '{print $2}' <<<"$DEVID_LINES")"
+    IDENTITY_NAME="$(sed -E 's/^[^"]*"([^"]*)".*$/\1/' <<<"$DEVID_LINES")"
 fi
 
 if xcrun --find notarytool >/dev/null 2>&1; then
@@ -209,6 +214,10 @@ swift test
 
 echo "==> [2/8] evrensel imzalı $APP"
 SIGN="$SIGN_IDENTITY" VERSION="$VERSION" scripts/bundle.sh
+if ! codesign -dv --verbose=4 "$APP" 2>&1 | grep -qF "Authority=Developer ID Application: $SIGN_TEAM ("; then
+    echo "release.sh: HATA: $APP '$SIGN_TEAM' Developer ID ile imzalanmamış; yayın durduruldu (dışarıda hiçbir şey oluşturulmadı)." >&2
+    exit 1
+fi
 
 echo "==> [3/8] .app notarization + staple"
 ditto -c -k --keepParent "$APP" "$WORK/DevTidy-$VERSION-app.zip"

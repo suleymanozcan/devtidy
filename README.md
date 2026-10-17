@@ -236,8 +236,8 @@ Sürümler yerel Mac'ten `scripts/release.sh` ile yayınlanır (GitHub Actions d
 
 ### Bir kerelik hazırlık
 
-1. **Developer ID Application sertifikasını** oluşturun: Xcode › Settings › Accounts › Manage Certificates › **+** › Developer ID Application (yalnızca Account Holder oluşturabilir). Kontrol: `security find-identity -v -p codesigning`.
-2. **Notarization kimlik bilgilerini** anahtarlığa kaydedin (App Store Connect API anahtarı; `.p8` dosyası depoya girmez, `.gitignore`'da `*.p8` vardır):
+1. **Developer ID Application sertifikasını** Minata Entertainment, LLC takımı adına oluşturun: Xcode › Settings › Accounts › Minata Entertainment, LLC › Manage Certificates › **+** › Developer ID Application (yalnızca Account Holder oluşturabilir). Kontrol: `security find-identity -v -p codesigning` çıktısında `Developer ID Application: Minata Entertainment, LLC (<TEAMID>)` görünmeli.
+2. **Notarization kimlik bilgilerini** anahtarlığa kaydedin. App Store Connect API anahtarı aynı takımın (Minata Entertainment, LLC) Team anahtarı olmalı; `.p8` dosyası depoya girmez, `.gitignore`'da `*.p8` vardır:
 
    ```bash
    xcrun notarytool store-credentials devtidy-notary --key ~/.private_keys/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_UUID>
@@ -254,7 +254,7 @@ scripts/release.sh 0.1.0
 
 Önce yan etkisiz bir ön kontrol çalışır; eksik her şey Türkçe mesaj ve düzeltme komutuyla birlikte topluca listelenir: sürüm biçimi (`MAJOR.MINOR.PATCH`), temiz çalışma ağacı ve `main` dalı, `v<sürüm>` etiketinin yerelde ve `origin`'de olmaması, `origin/main`'in yerel `main` ile aynı olması, `gh auth status`, Developer ID Application kimliği ve `notarytool` profili. Ön kontrol geçerse sırayla: `swift test`, `scripts/bundle.sh` (imzalı), `.app` notarization + staple + `spctl`, `scripts/dmg.sh` (imzalı), DMG notarization + staple + `spctl`, sha256, etiket + push, `gh release create`, tap güncellemesi (tap yoksa `packaging/homebrew-tap/` içeriğinden public olarak oluşturulur). Etiket push edilene kadar herhangi bir adım başarısız olursa dışarıda hiçbir şey yayınlanmamıştır.
 
-Ortam değişkenleri: `SIGN_IDENTITY` (otomatik bulunan kimliği geçersiz kılar; SHA-1 ya da tam ad), `NOTARY_PROFILE` (varsayılan `devtidy-notary`).
+Ortam değişkenleri: `SIGN_TEAM` (imzalayan Developer ID sahibi, varsayılan `Minata Entertainment, LLC`; kimlik yalnızca bu adla seçilir ve imzalanan `.app`'in `Authority` satırı yayından önce bununla doğrulanır), `SIGN_IDENTITY` (aynı ada ait birden fazla sertifika varsa SHA-1 ya da tam ad), `NOTARY_PROFILE` (varsayılan `devtidy-notary`).
 
 Parçalar tek başına da kullanılabilir: `scripts/dmg.sh <app> <sürüm>` → `dist/DevTidy-<sürüm>.dmg` (`SIGN=<kimlik>` DMG'yi imzalar); `scripts/cask.sh <sürüm> <sha256>` cask'i stdout'a yazar (cask şablonunun tek kaynağı).
 
