@@ -1,0 +1,46 @@
+name: audit
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  audit:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cask var mı?
+        id: cask
+        run: |
+          if [ -f Casks/devtidy.rb ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Casks/devtidy.rb yok: denetim atlandı."
+          fi
+
+      - name: Tap'i checkout'tan ekle
+        if: steps.cask.outputs.present == 'true'
+        run: brew tap suleymanozcan/tap "$GITHUB_WORKSPACE"
+
+      - name: brew style
+        if: steps.cask.outputs.present == 'true'
+        run: brew style suleymanozcan/tap
+
+      - name: brew audit
+        if: steps.cask.outputs.present == 'true'
+        run: brew audit --cask --strict --online devtidy
+
+      - name: brew install
+        if: steps.cask.outputs.present == 'true'
+        run: brew install --cask devtidy
+
+      - name: Kurulumu doğrula
+        if: steps.cask.outputs.present == 'true'
+        run: |
+          test -d /Applications/DevTidy.app
+          spctl -a -vv /Applications/DevTidy.app

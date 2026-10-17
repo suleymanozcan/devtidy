@@ -1,0 +1,7 @@
+.build/
+build/
+dist/
+.swiftpm/
+.DS_Store
+# Apple notary API anahtarları depoya asla girmez.
+*.p8
